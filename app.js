@@ -1346,14 +1346,24 @@ Class Rank: 12 of 380</pre>
     document.addEventListener("drop", (e) => { e.preventDefault(); });
 
     function showImagePreview(file) {
+      console.log("[CollegeMax] showImagePreview called for:", file && file.name, file && file.type, file && file.size + " bytes");
       const elPreview = document.getElementById("image-preview");
-      if (!elPreview) return;
+      if (!elPreview) {
+        console.warn("[CollegeMax] image-preview element not found");
+        return;
+      }
       // Revoke any previous object URL
       const prevImg = elPreview.querySelector("img");
       if (prevImg && prevImg.dataset.objurl) {
         try { URL.revokeObjectURL(prevImg.dataset.objurl); } catch {}
       }
-      const url = URL.createObjectURL(file);
+      let url;
+      try {
+        url = URL.createObjectURL(file);
+      } catch (e) {
+        console.error("[CollegeMax] createObjectURL failed:", e);
+        return;
+      }
       const sizeKb = (file.size / 1024).toFixed(0);
       elPreview.innerHTML = `
         <div class="image-preview-head">
@@ -1362,12 +1372,15 @@ Class Rank: 12 of 380</pre>
         </div>
         <img src="${url}" alt="Uploaded preview" data-objurl="${url}" />
       `;
-      elPreview.hidden = false;
+      elPreview.removeAttribute("hidden");
+      elPreview.style.display = "block"; // force visibility in case CSS cache stale
       elPreview.querySelector(".image-remove").addEventListener("click", () => {
         try { URL.revokeObjectURL(url); } catch {}
         elPreview.innerHTML = "";
-        elPreview.hidden = true;
+        elPreview.setAttribute("hidden", "");
+        elPreview.style.display = "";
       });
+      console.log("[CollegeMax] preview rendered, element visible:", !elPreview.hidden);
     }
 
     async function runOcrOnFile(file) {
