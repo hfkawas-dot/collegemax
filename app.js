@@ -1346,13 +1346,12 @@ Class Rank: 12 of 380</pre>
     document.addEventListener("drop", (e) => { e.preventDefault(); });
 
     function showImagePreview(file) {
-      console.log("[CollegeMax] showImagePreview called for:", file && file.name, file && file.type, file && file.size + " bytes");
+      console.log("[CollegeMax] showImagePreview:", file && file.name, file && file.type, file && file.size);
       const elPreview = document.getElementById("image-preview");
       if (!elPreview) {
         console.warn("[CollegeMax] image-preview element not found");
         return;
       }
-      // Revoke any previous object URL
       const prevImg = elPreview.querySelector("img");
       if (prevImg && prevImg.dataset.objurl) {
         try { URL.revokeObjectURL(prevImg.dataset.objurl); } catch {}
@@ -1367,20 +1366,35 @@ Class Rank: 12 of 380</pre>
       const sizeKb = (file.size / 1024).toFixed(0);
       elPreview.innerHTML = `
         <div class="image-preview-head">
+          <span class="image-preview-label">Your uploaded photo</span>
           <span class="image-preview-name">${escapeHtml(file.name || "image")} · ${sizeKb} KB</span>
           <button class="image-remove" type="button" aria-label="Remove">&times;</button>
         </div>
         <img src="${url}" alt="Uploaded preview" data-objurl="${url}" />
       `;
       elPreview.removeAttribute("hidden");
-      elPreview.style.display = "block"; // force visibility in case CSS cache stale
+      elPreview.style.display = "block";
+
+      const imgEl = elPreview.querySelector("img");
+      imgEl.addEventListener("load", () => {
+        console.log("[CollegeMax] preview img loaded:", imgEl.naturalWidth + "x" + imgEl.naturalHeight);
+      });
+      imgEl.addEventListener("error", (err) => {
+        console.error("[CollegeMax] preview img failed to load", err);
+        elPreview.innerHTML = `<div class="image-preview-head"><span class="image-preview-label">Photo upload</span></div><div class="muted">Could not display the photo. The OCR'd text below should still work.</div>`;
+      });
+
       elPreview.querySelector(".image-remove").addEventListener("click", () => {
         try { URL.revokeObjectURL(url); } catch {}
         elPreview.innerHTML = "";
         elPreview.setAttribute("hidden", "");
         elPreview.style.display = "";
       });
-      console.log("[CollegeMax] preview rendered, element visible:", !elPreview.hidden);
+
+      // Scroll into view so the user actually sees the preview
+      requestAnimationFrame(() => {
+        elPreview.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
     }
 
     async function runOcrOnFile(file) {

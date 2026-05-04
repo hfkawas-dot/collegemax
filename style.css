@@ -620,19 +620,31 @@ details .tip {
 
 /* === IMAGE PREVIEW === */
 .image-preview {
-  margin-top: 12px;
+  margin-top: 14px;
   background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  box-shadow: 0 4px 16px rgba(240, 180, 41, 0.12);
 }
 .image-preview[hidden] { display: none; }
 .image-preview-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.image-preview-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--accent-2);
+  background: var(--accent-soft);
+  padding: 4px 10px;
+  border-radius: 3px;
 }
 .image-preview-name {
   font-size: 12px;
@@ -641,6 +653,7 @@ details .tip {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
 }
 .image-remove {
   background: transparent;
