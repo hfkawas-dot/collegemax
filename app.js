@@ -1094,88 +1094,134 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       classRank: "Class rank %",
       intendedMajor: "Major"
     };
+    const FIELD_ORDER = ["name", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
 
-    function applyParsed(parsed) {
-      const fields = ["name", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
-      const found = [];
-      const missed = [];
-      for (const f of fields) {
-        if (parsed[f] !== undefined && parsed[f] !== null && parsed[f] !== "") {
-          if (profileForm.elements[f]) {
-            profileForm.elements[f].value = parsed[f];
-            state.profile[f] = parsed[f];
-            found.push({ field: f, label: FIELD_LABELS[f], value: parsed[f] });
-          }
-        } else {
-          missed.push(FIELD_LABELS[f]);
-        }
-      }
-      persist();
-      return { found, missed };
-    }
+    // Staged values from the last parse — NOT applied until user confirms
+    let stagedParse = null;
 
     async function runParse(rawText) {
+      stagedParse = null;
       const apiKey = localStorage.getItem(API_KEY_STORAGE);
       if (apiKey) {
-        // Try AI first, fall back to regex
         elParseResult.innerHTML = `<div class="parse-thinking">Claude is reading your text...</div>`;
         try {
           const aiParsed = await parseWithClaude(rawText, apiKey);
           if (Object.keys(aiParsed).length > 0) {
-            const { found, missed } = applyParsed(aiParsed);
-            renderParseReport(found, missed, rawText, "ai");
+            stagedParse = { values: aiParsed, mode: "ai" };
+            renderStagedPreview();
             return;
           }
-          // AI returned empty -> fall through to regex
         } catch (err) {
           console.warn("Claude parse failed, falling back to regex:", err);
           elParseResult.innerHTML = `<div class="parse-warning">AI parsing failed (${escapeHtml(err.message)}). Falling back to pattern parser.</div>`;
         }
       }
       const parsed = parseTranscript(rawText);
-      const { found, missed } = applyParsed(parsed);
-      renderParseReport(found, missed, rawText, "rules");
+      stagedParse = { values: parsed, mode: "rules" };
+      renderStagedPreview();
     }
 
-    function renderParseReport(found, missed, rawText, mode) {
+    function renderStagedPreview() {
       elParseResult.innerHTML = "";
-      const wrap = document.createElement("div");
-      wrap.className = "parse-report";
+      if (!stagedParse) return;
+      const { values, mode } = stagedParse;
       const modeLabel = mode === "ai" ? "Claude AI" : "pattern parser";
+
+      const wrap = document.createElement("div");
+      wrap.className = "parse-report staged";
+
+      const found = FIELD_ORDER.filter(f => values[f] !== undefined && values[f] !== null && values[f] !== "");
+      const missed = FIELD_ORDER.filter(f => !(values[f] !== undefined && values[f] !== null && values[f] !== ""));
 
       if (found.length === 0) {
         wrap.innerHTML = `
           <div class="parse-empty">
             <strong>Could not detect anything (${modeLabel}).</strong>
             <p>Try a format like:</p>
-            <pre>GPA: 3.85
+            <pre>Name: Alex Kim
+GPA: 3.85
 Weighted GPA: 4.20
 SAT: 1480
 AP Biology, AP Calculus AB
 Class Rank: 12 of 380</pre>
-            ${mode !== "ai" ? '<p><em>Tip: turn on AI parsing below for messier text.</em></p>' : ''}
           </div>
         `;
-      } else {
-        const foundHtml = found.map(f =>
-          `<li><span class="pill-found">found</span> <strong>${escapeHtml(f.label)}</strong>: ${escapeHtml(String(f.value))}</li>`
-        ).join("");
-        const missedHtml = missed.length
-          ? `<details class="parse-missed-details"><summary>${missed.length} field${missed.length === 1 ? "" : "s"} not detected (click)</summary><ul>${
-              missed.map(m => `<li><span class="pill-missed">missing</span> ${escapeHtml(m)}</li>`).join("")
-            }</ul></details>`
-          : "";
-        wrap.innerHTML = `
-          <div class="parse-success">
-            <strong>${found.length} field${found.length === 1 ? "" : "s"} filled in</strong>
-            <span class="parse-mode">via ${modeLabel}</span>.
-            Review below and click <em>Save Profile</em>.
-          </div>
-          <ul class="parse-found-list">${foundHtml}</ul>
-          ${missedHtml}
-        `;
+        elParseResult.appendChild(wrap);
+        return;
       }
+
+      const rowsHtml = found.map(f => {
+        const val = values[f];
+        const inputType = (typeof val === "number") ? "number" : "text";
+        return `
+          <div class="staged-row" data-field="${f}">
+            <label class="staged-check">
+              <input type="checkbox" checked />
+              <span>${escapeHtml(FIELD_LABELS[f])}</span>
+            </label>
+            <input type="${inputType}" class="staged-value" value="${escapeHtml(String(val))}" />
+          </div>
+        `;
+      }).join("");
+
+      const missedHtml = missed.length
+        ? `<details class="parse-missed-details">
+             <summary>${missed.length} field${missed.length === 1 ? "" : "s"} not detected</summary>
+             <ul>${missed.map(f => `<li><span class="pill-missed">missing</span> ${escapeHtml(FIELD_LABELS[f])}</li>`).join("")}</ul>
+           </details>`
+        : "";
+
+      wrap.innerHTML = `
+        <div class="parse-success">
+          <strong>${found.length} field${found.length === 1 ? "" : "s"} detected</strong>
+          <span class="parse-mode">via ${modeLabel}</span>.
+          Review and edit below, then click <em>Fill profile</em>.
+        </div>
+        <div class="staged-rows">${rowsHtml}</div>
+        <div class="staged-actions">
+          <button id="staged-apply" type="button" class="primary">Fill profile</button>
+          <button id="staged-discard" type="button" class="secondary">Discard</button>
+        </div>
+        ${missedHtml}
+      `;
       elParseResult.appendChild(wrap);
+
+      document.getElementById("staged-apply").addEventListener("click", applyStaged);
+      document.getElementById("staged-discard").addEventListener("click", () => {
+        stagedParse = null;
+        elParseResult.innerHTML = "";
+      });
+    }
+
+    function applyStaged() {
+      if (!stagedParse) return;
+      const rows = document.querySelectorAll(".staged-row");
+      const applied = [];
+      rows.forEach(row => {
+        const field = row.dataset.field;
+        const checked = row.querySelector('input[type="checkbox"]').checked;
+        const valEl = row.querySelector(".staged-value");
+        if (!checked || !field) return;
+        let val = valEl.value;
+        // Convert numeric fields
+        const numFields = new Set(["unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank"]);
+        if (numFields.has(field)) {
+          const num = Number(val);
+          if (!isNaN(num) && val !== "") val = num;
+          else return; // skip invalid
+        }
+        if (profileForm.elements[field]) {
+          profileForm.elements[field].value = val;
+          state.profile[field] = val;
+          applied.push(FIELD_LABELS[field]);
+        }
+      });
+      persist();
+      stagedParse = null;
+      elParseResult.innerHTML = `<div class="parse-success applied"><strong>Filled ${applied.length} field${applied.length === 1 ? "" : "s"}:</strong> ${applied.join(", ")}. Review the form below and click <em>Save Profile</em>.</div>`;
+      setTimeout(() => {
+        if (elParseResult.querySelector(".applied")) elParseResult.innerHTML = "";
+      }, 8000);
     }
 
     elParseBtn.addEventListener("click", () => {
@@ -1232,12 +1278,27 @@ Class Rank: 12 of 380</pre>
       setTimeout(() => { elApiKeyStatus.textContent = ""; }, 3000);
     });
 
-    // === OCR (image upload) ===
-    const elUploadBtn = document.getElementById("upload-image-btn");
+    // === OCR (image upload + drag/drop) ===
+    const elDropZone = document.getElementById("screenshot-zone");
     const elImageInput = document.getElementById("transcript-image");
     const elOcrProgress = document.getElementById("ocr-progress");
 
-    elUploadBtn.addEventListener("click", () => elImageInput.click());
+    elDropZone.addEventListener("click", () => elImageInput.click());
+    elDropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      elDropZone.classList.add("drag-over");
+    });
+    elDropZone.addEventListener("dragleave", () => {
+      elDropZone.classList.remove("drag-over");
+    });
+    elDropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      elDropZone.classList.remove("drag-over");
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file && file.type && file.type.startsWith("image/")) {
+        runOcrOnFile(file);
+      }
+    });
 
     async function runOcrOnFile(file) {
       if (!file) return;
