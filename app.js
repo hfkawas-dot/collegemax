@@ -350,23 +350,56 @@ function rankColleges(profile, savedIds, colleges, source) {
 
 // === TRANSCRIPT PARSER ===
 // Best-effort extraction from any pasted text or OCR output.
-// Returns { unweightedGpa, weightedGpa, sat, act, apCount, classRank, intendedMajor }.
+// Returns { name, unweightedGpa, weightedGpa, sat, act, apCount, classRank, intendedMajor }.
 function parseTranscript(text) {
   const out = {};
   if (!text || typeof text !== "string") return out;
   const t = text;
 
-  // ---- Unweighted GPA (explicit label) ----
-  let m = t.match(/un[-\s]*weighted\s*(?:gpa|grade\s*point\s*average)?[\s:=]*(\d\.\d{1,3})/i)
-       || t.match(/gpa\s*\(?\s*un[-\s]*weighted\s*\)?[\s:=]*(\d\.\d{1,3})/i)
-       || t.match(/\buw\s*gpa[\s:=]*(\d\.\d{1,3})/i);
-  if (m) out.unweightedGpa = parseFloat(m[1]);
+  // Helper: pick the LAST occurrence of a regex (for transcripts with per-year + cumulative)
+  function lastMatch(re) {
+    const all = [...t.matchAll(re)];
+    return all.length ? all[all.length - 1] : null;
+  }
 
-  // ---- Weighted GPA (explicit label) ----
-  m = t.match(/weighted\s*(?:gpa|grade\s*point\s*average)?[\s:=]*(\d\.\d{1,3})/i)
-   || t.match(/gpa\s*\(?\s*weighted\s*\)?[\s:=]*(\d\.\d{1,3})/i)
-   || t.match(/\bw\s*gpa[\s:=]*(\d\.\d{1,3})/i);
-  if (m) out.weightedGpa = parseFloat(m[1]);
+  // ---- Name ----
+  let m = t.match(/(?:student\s*name|legal\s*name|full\s*name|name)[ \t]*[:=-]+[ \t]*([A-Z][a-zA-Z'-]+(?:[ \t]+[A-Z][a-zA-Z'.-]+){1,3})/i);
+  if (m) {
+    out.name = m[1].trim();
+  } else {
+    // Fallback: first line that looks like "First Last" (no digits, 2-4 cap-words)
+    const lines = t.split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.length > 60) continue;
+      const nameLine = trimmed.match(/^([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3})$/);
+      if (nameLine && !/(grade|school|gpa|sat|act|year|semester|quarter|fall|spring|cumulative)/i.test(trimmed)) {
+        out.name = nameLine[1];
+        break;
+      }
+    }
+  }
+
+  // ---- Cumulative GPA gets priority ----
+  // If "Cumulative GPA: X.XX" appears, that wins over per-year GPAs.
+  m = lastMatch(/cumulative\s*(?:un[-\s]*weighted)?\s*(?:gpa|grade\s*point\s*average)?[\s:=]*(\d\.\d{1,3})/gi);
+  if (m) {
+    const val = parseFloat(m[1]);
+    if (val > 4.0) out.weightedGpa = val;
+    else if (val >= 1.0) out.unweightedGpa = val;
+  }
+
+  // ---- Unweighted GPA (explicit label) — pick the LAST one ----
+  m = lastMatch(/un[-\s]*weighted\s*(?:gpa|grade\s*point\s*average)?[\s:=]+(\d\.\d{1,3})/gi)
+   || lastMatch(/gpa\s*\(?\s*un[-\s]*weighted\s*\)?[\s:=]+(\d\.\d{1,3})/gi)
+   || lastMatch(/\buw\s*gpa[\s:=]+(\d\.\d{1,3})/gi);
+  if (m && !out.unweightedGpa) out.unweightedGpa = parseFloat(m[1]);
+
+  // ---- Weighted GPA (explicit label) — pick the LAST one ----
+  m = lastMatch(/weighted\s*(?:gpa|grade\s*point\s*average)?[\s:=]+(\d\.\d{1,3})/gi)
+   || lastMatch(/gpa\s*\(?\s*weighted\s*\)?[\s:=]+(\d\.\d{1,3})/gi)
+   || lastMatch(/\bw\s*gpa[\s:=]+(\d\.\d{1,3})/gi);
+  if (m && !out.weightedGpa) out.weightedGpa = parseFloat(m[1]);
 
   // ---- "X.XX/4.0" -> unweighted; "X.XX/5.0" -> weighted ----
   if (!out.unweightedGpa) {
@@ -426,14 +459,38 @@ function parseTranscript(text) {
   }
 
   // ---- AP/IB/Honors course count ----
-  // 1. Course-name patterns: "AP Biology", "IB History", "Honors English"
-  const apMatches = t.match(/\bAP\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z&]+){0,2}/g) || [];
-  const ibMatches = t.match(/\bIB\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z&]+){0,2}/g) || [];
-  const honorsMatches = t.match(/\bhonors\s+[A-Za-z]+(?:\s+[A-Za-z]+)?/gi) || [];
+  // Many transcripts: course on its own line, with year/grade in adjacent columns.
+  // Match per-line so column data doesn't bleed across courses.
   const allRigorous = new Set();
-  for (const s of apMatches) allRigorous.add(s.toLowerCase().trim());
-  for (const s of ibMatches) allRigorous.add(s.toLowerCase().trim());
-  for (const s of honorsMatches) allRigorous.add(s.toLowerCase().trim());
+  const lines = t.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // 1. AP <Course Name> — match ALL on the line (handles "AP Bio, AP Chem, AP Calc")
+    const apMatches = [...line.matchAll(/\bAP\s+([A-Z][A-Za-z&]+(?:\s+[A-Z][A-Za-z&]+){0,3})/g)];
+    for (const apM of apMatches) allRigorous.add(("ap " + apM[1]).toLowerCase().trim());
+
+    // 2. IB <Course Name> or IB HL/SL <Course> — match ALL on the line
+    const ibMatches = [...line.matchAll(/\bIB\s+(?:HL\s+|SL\s+)?([A-Z][A-Za-z&]+(?:\s+[A-Z][A-Za-z&]+){0,3})/g)];
+    for (const ibM of ibMatches) allRigorous.add(("ib " + ibM[1]).toLowerCase().trim());
+
+    // 3. "<Course> Honors" or "Honors <Course>"
+    const honorsPrefix = line.match(/\bhonors\s+([A-Z][A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
+    const honorsSuffix = line.match(/([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s+honors\b/i);
+    if (honorsPrefix) allRigorous.add(("honors " + honorsPrefix[1]).toLowerCase().trim());
+    else if (honorsSuffix) allRigorous.add(("honors " + honorsSuffix[1]).toLowerCase().trim());
+
+    // 4. Column-code Honors: "(H)", "[H]", " H " marker on a course line
+    const honorsCode = line.match(/\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})\s*[\[(]?H[\])]?\b/);
+    if (honorsCode && /[\(\[]H[\)\]]|\sH\s|\sH$/.test(line)) {
+      const courseName = honorsCode[1];
+      // Avoid misfiring on "AP Biology" already captured
+      if (!/^AP\b/i.test(courseName) && !/^IB\b/i.test(courseName)) {
+        allRigorous.add(("honors " + courseName).toLowerCase().trim());
+      }
+    }
+  }
   if (allRigorous.size > 0) out.apCount = allRigorous.size;
 
   // 2. "X AP classes/courses/exams" or "X APs" — overrides if larger
@@ -492,26 +549,28 @@ async function parseWithClaude(text, apiKey) {
 
   const systemPrompt = "You extract structured college-application data from messy student-supplied text (transcripts, profile dumps, conversational descriptions, OCR output). Output JSON only.";
 
-  const userPrompt = `Read the text below and return ONE JSON object with whichever of these fields you can confidently extract. OMIT any field you cannot find — do not guess.
+  const userPrompt = `Read the text below (it may be a transcript, OCR output, or a free-form profile dump) and return ONE JSON object. OMIT any field you cannot find. Do not guess.
 
 Schema:
 {
-  "unweightedGpa": number 0-4 (unweighted scale),
-  "weightedGpa": number 0-5 (weighted scale, may be higher than 4.0),
+  "name": string (student's full name),
+  "unweightedGpa": number 0-4,
+  "weightedGpa": number 0-5,
   "sat": integer 400-1600 (total SAT),
   "act": integer 1-36 (composite ACT),
-  "apCount": integer (count of AP + IB + Honors classes mentioned),
+  "apCount": integer (TOTAL count of AP + IB + Honors courses across ALL years on the transcript, deduplicated),
   "classRank": integer (top X percentile, e.g. "8 of 412" -> 2),
-  "intendedMajor": string (intended college major)
+  "intendedMajor": string
 }
 
-Rules:
-- Return ONLY valid JSON, no prose, no markdown fences.
-- If a field appears under multiple labels (e.g. "GPA: 3.85" and "Unweighted: 3.85"), prefer the more specific label.
+Critical rules:
+- Multi-year transcripts: If the document shows per-year GPAs and a cumulative, ALWAYS use the cumulative. If multiple cumulatives appear (one per term), use the MOST RECENT.
+- AP / IB / Honors count: count EVERY rigor-marked course across all years, including current-year courses even if no grade is posted yet. Deduplicate same course taken twice. Honors may appear as "(H)", "[H]", a column "H" code, "Honors X", or "X Honors". Count all of them.
 - "X.XX/4.0" implies unweighted. "X.XX/5.0" implies weighted.
-- For class rank, convert "5 of 200" to top 3 (percentile), not the literal 5.
-- Count AP/IB/Honors as a deduplicated number of distinct courses.
-- If the text contains nothing relevant, return {}.
+- For class rank, convert "8 of 412" to top 2 (percentile), not the literal 8.
+- Name: extract the student's actual name if present. Do not invent one.
+- Return ONLY valid JSON, no prose, no markdown fences.
+- If the text has nothing relevant, return {}.
 
 TEXT:
 """
@@ -562,6 +621,7 @@ JSON:`;
 
   // Validate ranges, drop bad fields silently
   const out = {};
+  if (typeof parsed.name === "string" && parsed.name.length >= 2 && parsed.name.length < 80 && /[A-Za-z]/.test(parsed.name)) out.name = parsed.name.trim();
   if (typeof parsed.unweightedGpa === "number" && parsed.unweightedGpa >= 0 && parsed.unweightedGpa <= 4.0) out.unweightedGpa = parsed.unweightedGpa;
   if (typeof parsed.weightedGpa === "number" && parsed.weightedGpa >= 0 && parsed.weightedGpa <= 5.0) out.weightedGpa = parsed.weightedGpa;
   if (typeof parsed.sat === "number" && parsed.sat >= 400 && parsed.sat <= 1600) out.sat = Math.round(parsed.sat);
@@ -1025,6 +1085,7 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     const elParseBtn = document.getElementById("parse-transcript");
     const elParseResult = document.getElementById("parse-result");
     const FIELD_LABELS = {
+      name: "Name",
       unweightedGpa: "Unweighted GPA",
       weightedGpa: "Weighted GPA",
       sat: "SAT",
@@ -1035,7 +1096,7 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     };
 
     function applyParsed(parsed) {
-      const fields = ["unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
+      const fields = ["name", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
       const found = [];
       const missed = [];
       for (const f of fields) {
@@ -1178,8 +1239,7 @@ Class Rank: 12 of 380</pre>
 
     elUploadBtn.addEventListener("click", () => elImageInput.click());
 
-    elImageInput.addEventListener("change", async (e) => {
-      const file = e.target.files && e.target.files[0];
+    async function runOcrOnFile(file) {
       if (!file) return;
       if (typeof Tesseract === "undefined") {
         elOcrProgress.innerHTML = `<span class="ocr-err">OCR engine still loading. Wait a moment then try again.</span>`;
@@ -1206,9 +1266,54 @@ Class Rank: 12 of 380</pre>
         setTimeout(() => { elOcrProgress.innerHTML = ""; }, 2000);
       } catch (err) {
         elOcrProgress.innerHTML = `<span class="ocr-err">OCR failed: ${escapeHtml(err.message || String(err))}</span>`;
+      }
+    }
+
+    elImageInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      try {
+        await runOcrOnFile(file);
       } finally {
         elImageInput.value = ""; // allow re-upload of same file
       }
+    });
+
+    // === CLIPBOARD PASTE: drop a screenshot anywhere in Quick Import ===
+    function handleClipboardImagePaste(e) {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return false;
+      for (const item of items) {
+        if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            runOcrOnFile(file);
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    elTranscript.addEventListener("paste", handleClipboardImagePaste);
+
+    // Also catch paste anywhere in the Quick Import card while it's the focus area
+    const quickImportEl = document.querySelector(".quick-import");
+    if (quickImportEl) {
+      quickImportEl.addEventListener("paste", (e) => {
+        if (e.target === elTranscript) return; // textarea handled it
+        handleClipboardImagePaste(e);
+      });
+    }
+
+    // Global paste capture on Profile tab so Ctrl+V works without focusing the textarea
+    document.addEventListener("paste", (e) => {
+      const onProfile = !document.getElementById("panel-profile").classList.contains("hidden");
+      if (!onProfile) return;
+      // If focus is in any input/textarea other than transcript, let that field handle paste
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA") && active !== elTranscript) return;
+      handleClipboardImagePaste(e);
     });
 
     profileForm.addEventListener("submit", (e) => {

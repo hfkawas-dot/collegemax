@@ -632,6 +632,68 @@ test("parseTranscript: accepts noisy OCR-like text with extra spaces", () => {
   assertEq(r.unweightedGpa, 3.85);
 });
 
+// === New: name + multi-year + honors-code support ===
+test("parseTranscript: extracts student name with explicit label", () => {
+  const r = parseTranscript("Student Name: Maya Patel\nGPA: 3.85");
+  assertEq(r.name, "Maya Patel");
+});
+
+test("parseTranscript: extracts name from first plausible line", () => {
+  const r = parseTranscript("Maya Patel\n9th Grade Transcript\nGPA: 3.85");
+  assertEq(r.name, "Maya Patel");
+});
+
+test("parseTranscript: name fallback skips lines that contain stat words", () => {
+  const r = parseTranscript("Cumulative GPA Report\nMaya Patel\nGPA: 3.85");
+  assertEq(r.name, "Maya Patel");
+});
+
+test("parseTranscript: prefers cumulative GPA over per-year GPAs", () => {
+  const text = `9th Grade GPA: 3.65
+10th Grade GPA: 3.78
+11th Grade GPA: 3.95
+Cumulative GPA: 3.79`;
+  const r = parseTranscript(text);
+  assertEq(r.unweightedGpa, 3.79);
+});
+
+test("parseTranscript: uses last cumulative when multiple appear", () => {
+  const text = `End of Year 1 - Cumulative GPA: 3.65
+End of Year 2 - Cumulative GPA: 3.78
+End of Year 3 - Cumulative GPA: 3.92`;
+  const r = parseTranscript(text);
+  assertEq(r.unweightedGpa, 3.92);
+});
+
+test("parseTranscript: counts Honors with (H) parens marker", () => {
+  const text = `English (H)
+Chemistry (H)
+US History (H)
+AP Biology
+AP Calculus AB`;
+  const r = parseTranscript(text);
+  // 3 honors + 2 AP = 5
+  assert(r.apCount >= 5, "expected 5+ rigorous courses, got " + r.apCount);
+});
+
+test("parseTranscript: counts honors in 'X Honors' suffix form", () => {
+  const text = `Biology Honors - A
+Chemistry Honors - A-
+English Honors - A`;
+  const r = parseTranscript(text);
+  assert(r.apCount >= 3, "expected 3 honors, got " + r.apCount);
+});
+
+test("parseTranscript: counts mixed AP, IB HL/SL, and Honors", () => {
+  const text = `AP Biology
+IB HL History
+IB SL Spanish
+Honors English
+Honors Pre-Calculus`;
+  const r = parseTranscript(text);
+  assert(r.apCount >= 5, "expected 5 mixed-rigor courses, got " + r.apCount);
+});
+
 // === RUNNER ===
 function runTests() {
   const log = document.getElementById("test-output");
