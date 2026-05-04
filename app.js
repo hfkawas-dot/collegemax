@@ -986,9 +986,21 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     elCategoryFilter.addEventListener("change", renderCatalog);
     elTierFilter.addEventListener("change", renderCatalog);
     elExport.addEventListener("click", () => {
-      elExportArea.value = exportResume(state);
+      const text = exportResume(state);
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().split("T")[0];
+      const namePart = (state.profile.name || "resume").trim().replace(/[^A-Za-z0-9-_]+/g, "_");
+      a.href = url;
+      a.download = `${namePart}-${date}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      // Also still show in-page so they can see what's there
+      elExportArea.value = text;
       elExportArea.style.display = "block";
-      elExportArea.select();
     });
 
     // ===== TABS =====
@@ -1352,24 +1364,26 @@ Class Rank: 12 of 380</pre>
         const statusEl = elOcrProgress.querySelector(".ocr-status");
         if (statusEl) statusEl.textContent = "Reading image (5-30 seconds)...";
 
-        // v5 createWorker has its own loggerless interface; recognize returns the data
         const result = await worker.recognize(file);
         const text = (result && result.data && result.data.text) || "";
         if (bar) bar.style.width = "100%";
 
         if (!text.trim()) {
-          elOcrProgress.innerHTML = `<span class="ocr-err">OCR returned empty text. The image may be too small or low-contrast. Try a clearer screenshot.</span>`;
+          elOcrProgress.innerHTML = `<span class="ocr-err">OCR returned empty text. The image may be too small or low-contrast. Try a clearer photo.</span>`;
           return;
         }
-        elTranscript.value = text;
-        elOcrProgress.innerHTML = `<span class="ocr-ok">Image read (${text.length} chars). Parsing...</span>`;
+        // Don't dump the OCR text into the textarea. Feed it directly to the parser.
+        // Stash the raw OCR for the "show extracted text" toggle below the preview.
+        lastOcrText = text;
+        elOcrProgress.innerHTML = `<span class="ocr-ok">Image read. Parsing...</span>`;
         runParse(text);
-        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 2500);
+        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 1800);
       } catch (err) {
         console.error("OCR failed:", err);
         elOcrProgress.innerHTML = `<span class="ocr-err">OCR failed: ${escapeHtml(err.message || String(err))}<br><small>Open the browser console for full error details.</small></span>`;
       }
     }
+    let lastOcrText = "";
 
     elImageInput.addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
