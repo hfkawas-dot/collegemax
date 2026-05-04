@@ -72,11 +72,31 @@ Intended Major: Computer Science"></textarea>
           <div class="qi-actions">
             <button id="parse-transcript" type="button" class="primary">Auto-fill from text</button>
             <span class="qi-divider">or</span>
-            <button id="upload-image-btn" type="button" class="secondary">📷 Upload photo of transcript</button>
+            <button id="upload-image-btn" type="button" class="secondary">Upload photo of transcript</button>
             <input id="transcript-image" type="file" accept="image/*" style="display:none" />
           </div>
           <div id="ocr-progress" class="ocr-progress"></div>
           <div id="parse-result"></div>
+
+          <details class="ai-settings">
+            <summary>
+              <span id="ai-status-pill" class="ai-status-off">AI parsing: off</span>
+              <span class="ai-settings-hint">Click to enable smarter parsing</span>
+            </summary>
+            <div class="ai-settings-body">
+              <p>
+                Smarter parsing reads any messy paste with Claude. Bring your own Anthropic API key.
+                Free $5 credit at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>
+                covers thousands of parses (about $0.001 each). Your key stays in your browser only.
+              </p>
+              <div class="api-key-row">
+                <input id="api-key-input" type="password" placeholder="sk-ant-api03-..." autocomplete="off" />
+                <button id="api-key-save" type="button" class="primary">Save key</button>
+                <button id="api-key-clear" type="button" class="secondary">Clear</button>
+              </div>
+              <span id="api-key-status" class="muted"></span>
+            </div>
+          </details>
         </div>
 
         <h3 class="form-section-title">Or fill in manually</h3>

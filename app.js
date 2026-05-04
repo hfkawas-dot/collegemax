@@ -2,6 +2,8 @@
 // Pure functions are exported for tests; UI wiring happens at the bottom.
 
 const STORAGE_KEY = "collegemax_v1";
+const API_KEY_STORAGE = "collegemax_anthropic_key";
+const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
 
 // === STATE ===
 function defaultState() {
@@ -481,6 +483,95 @@ function parseTranscript(text) {
   return out;
 }
 
+// === CLAUDE API PARSING ===
+// Uses the user's own Anthropic key, called direct from browser.
+// Returns same shape as parseTranscript().
+async function parseWithClaude(text, apiKey) {
+  if (!apiKey) throw new Error("No API key configured");
+  if (!text || !text.trim()) return {};
+
+  const systemPrompt = "You extract structured college-application data from messy student-supplied text (transcripts, profile dumps, conversational descriptions, OCR output). Output JSON only.";
+
+  const userPrompt = `Read the text below and return ONE JSON object with whichever of these fields you can confidently extract. OMIT any field you cannot find — do not guess.
+
+Schema:
+{
+  "unweightedGpa": number 0-4 (unweighted scale),
+  "weightedGpa": number 0-5 (weighted scale, may be higher than 4.0),
+  "sat": integer 400-1600 (total SAT),
+  "act": integer 1-36 (composite ACT),
+  "apCount": integer (count of AP + IB + Honors classes mentioned),
+  "classRank": integer (top X percentile, e.g. "8 of 412" -> 2),
+  "intendedMajor": string (intended college major)
+}
+
+Rules:
+- Return ONLY valid JSON, no prose, no markdown fences.
+- If a field appears under multiple labels (e.g. "GPA: 3.85" and "Unweighted: 3.85"), prefer the more specific label.
+- "X.XX/4.0" implies unweighted. "X.XX/5.0" implies weighted.
+- For class rank, convert "5 of 200" to top 3 (percentile), not the literal 5.
+- Count AP/IB/Honors as a deduplicated number of distinct courses.
+- If the text contains nothing relevant, return {}.
+
+TEXT:
+"""
+${text}
+"""
+
+JSON:`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: 400,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }]
+    })
+  });
+
+  if (!res.ok) {
+    let errText;
+    try {
+      const j = await res.json();
+      errText = (j && j.error && j.error.message) || JSON.stringify(j);
+    } catch { errText = await res.text(); }
+    throw new Error(`Anthropic API ${res.status}: ${errText}`);
+  }
+  const data = await res.json();
+  const content = data && data.content && data.content[0] && data.content[0].text;
+  if (!content) throw new Error("Empty response from Claude");
+
+  // Strip ```json fences if Claude added them despite instructions
+  const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("No JSON object in response: " + cleaned.slice(0, 200));
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    throw new Error("Invalid JSON from Claude: " + jsonMatch[0].slice(0, 200));
+  }
+
+  // Validate ranges, drop bad fields silently
+  const out = {};
+  if (typeof parsed.unweightedGpa === "number" && parsed.unweightedGpa >= 0 && parsed.unweightedGpa <= 4.0) out.unweightedGpa = parsed.unweightedGpa;
+  if (typeof parsed.weightedGpa === "number" && parsed.weightedGpa >= 0 && parsed.weightedGpa <= 5.0) out.weightedGpa = parsed.weightedGpa;
+  if (typeof parsed.sat === "number" && parsed.sat >= 400 && parsed.sat <= 1600) out.sat = Math.round(parsed.sat);
+  if (typeof parsed.act === "number" && parsed.act >= 1 && parsed.act <= 36) out.act = Math.round(parsed.act);
+  if (typeof parsed.apCount === "number" && parsed.apCount >= 0 && parsed.apCount <= 30) out.apCount = Math.round(parsed.apCount);
+  if (typeof parsed.classRank === "number" && parsed.classRank >= 1 && parsed.classRank <= 100) out.classRank = Math.round(parsed.classRank);
+  if (typeof parsed.intendedMajor === "string" && parsed.intendedMajor.length > 1 && parsed.intendedMajor.length < 80) out.intendedMajor = parsed.intendedMajor.trim();
+  return out;
+}
+
 // === ESSAY GRADER ===
 function gradeEssay(text) {
   text = (text || "").trim();
@@ -693,7 +784,7 @@ if (typeof module !== "undefined") {
     filterActivities, suggestActivities,
     botReply, exportResume,
     estimateOdds, rankColleges,
-    gradeEssay, generateEssay, parseTranscript,
+    gradeEssay, generateEssay, parseTranscript, parseWithClaude,
     STORAGE_KEY, INTEREST_MAP
   };
 }
@@ -933,18 +1024,18 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     const elTranscript = document.getElementById("transcript-input");
     const elParseBtn = document.getElementById("parse-transcript");
     const elParseResult = document.getElementById("parse-result");
-    function runParse(rawText) {
-      const parsed = parseTranscript(rawText);
+    const FIELD_LABELS = {
+      unweightedGpa: "Unweighted GPA",
+      weightedGpa: "Weighted GPA",
+      sat: "SAT",
+      act: "ACT",
+      apCount: "AP/Honors count",
+      classRank: "Class rank %",
+      intendedMajor: "Major"
+    };
+
+    function applyParsed(parsed) {
       const fields = ["unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
-      const labels = {
-        unweightedGpa: "Unweighted GPA",
-        weightedGpa: "Weighted GPA",
-        sat: "SAT",
-        act: "ACT",
-        apCount: "AP/Honors count",
-        classRank: "Class rank %",
-        intendedMajor: "Major"
-      };
       const found = [];
       const missed = [];
       for (const f of fields) {
@@ -952,31 +1043,56 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
           if (profileForm.elements[f]) {
             profileForm.elements[f].value = parsed[f];
             state.profile[f] = parsed[f];
-            found.push({ field: f, label: labels[f], value: parsed[f] });
+            found.push({ field: f, label: FIELD_LABELS[f], value: parsed[f] });
           }
         } else {
-          missed.push(labels[f]);
+          missed.push(FIELD_LABELS[f]);
         }
       }
       persist();
-      renderParseReport(found, missed, rawText);
+      return { found, missed };
     }
 
-    function renderParseReport(found, missed, rawText) {
+    async function runParse(rawText) {
+      const apiKey = localStorage.getItem(API_KEY_STORAGE);
+      if (apiKey) {
+        // Try AI first, fall back to regex
+        elParseResult.innerHTML = `<div class="parse-thinking">Claude is reading your text...</div>`;
+        try {
+          const aiParsed = await parseWithClaude(rawText, apiKey);
+          if (Object.keys(aiParsed).length > 0) {
+            const { found, missed } = applyParsed(aiParsed);
+            renderParseReport(found, missed, rawText, "ai");
+            return;
+          }
+          // AI returned empty -> fall through to regex
+        } catch (err) {
+          console.warn("Claude parse failed, falling back to regex:", err);
+          elParseResult.innerHTML = `<div class="parse-warning">AI parsing failed (${escapeHtml(err.message)}). Falling back to pattern parser.</div>`;
+        }
+      }
+      const parsed = parseTranscript(rawText);
+      const { found, missed } = applyParsed(parsed);
+      renderParseReport(found, missed, rawText, "rules");
+    }
+
+    function renderParseReport(found, missed, rawText, mode) {
       elParseResult.innerHTML = "";
       const wrap = document.createElement("div");
       wrap.className = "parse-report";
+      const modeLabel = mode === "ai" ? "Claude AI" : "pattern parser";
 
       if (found.length === 0) {
         wrap.innerHTML = `
           <div class="parse-empty">
-            <strong>Did not detect anything.</strong>
+            <strong>Could not detect anything (${modeLabel}).</strong>
             <p>Try a format like:</p>
             <pre>GPA: 3.85
 Weighted GPA: 4.20
 SAT: 1480
 AP Biology, AP Calculus AB
 Class Rank: 12 of 380</pre>
+            ${mode !== "ai" ? '<p><em>Tip: turn on AI parsing below for messier text.</em></p>' : ''}
           </div>
         `;
       } else {
@@ -990,7 +1106,8 @@ Class Rank: 12 of 380</pre>
           : "";
         wrap.innerHTML = `
           <div class="parse-success">
-            <strong>${found.length} field${found.length === 1 ? "" : "s"} filled in.</strong>
+            <strong>${found.length} field${found.length === 1 ? "" : "s"} filled in</strong>
+            <span class="parse-mode">via ${modeLabel}</span>.
             Review below and click <em>Save Profile</em>.
           </div>
           <ul class="parse-found-list">${foundHtml}</ul>
@@ -1002,6 +1119,56 @@ Class Rank: 12 of 380</pre>
 
     elParseBtn.addEventListener("click", () => {
       runParse(elTranscript.value);
+    });
+
+    // === API KEY MANAGEMENT ===
+    const elApiKeyInput = document.getElementById("api-key-input");
+    const elApiKeySave = document.getElementById("api-key-save");
+    const elApiKeyClear = document.getElementById("api-key-clear");
+    const elApiKeyStatus = document.getElementById("api-key-status");
+    const elAiStatusPill = document.getElementById("ai-status-pill");
+
+    function refreshAiStatus() {
+      const key = localStorage.getItem(API_KEY_STORAGE);
+      if (key) {
+        const masked = key.slice(0, 12) + "..." + key.slice(-4);
+        elAiStatusPill.textContent = "AI parsing: ON";
+        elAiStatusPill.className = "ai-status-on";
+        elApiKeyInput.placeholder = masked + " (saved)";
+        elApiKeyInput.value = "";
+      } else {
+        elAiStatusPill.textContent = "AI parsing: off";
+        elAiStatusPill.className = "ai-status-off";
+        elApiKeyInput.placeholder = "sk-ant-api03-...";
+      }
+    }
+    refreshAiStatus();
+
+    elApiKeySave.addEventListener("click", () => {
+      const v = elApiKeyInput.value.trim();
+      if (!v) {
+        elApiKeyStatus.textContent = "Paste your key first.";
+        elApiKeyStatus.style.color = "var(--orange)";
+        return;
+      }
+      if (!v.startsWith("sk-ant-")) {
+        elApiKeyStatus.textContent = "That doesn't look like an Anthropic key (should start with sk-ant-).";
+        elApiKeyStatus.style.color = "var(--orange)";
+        return;
+      }
+      localStorage.setItem(API_KEY_STORAGE, v);
+      elApiKeyStatus.textContent = "Saved. Auto-fill will now use Claude.";
+      elApiKeyStatus.style.color = "var(--green)";
+      refreshAiStatus();
+      setTimeout(() => { elApiKeyStatus.textContent = ""; }, 4000);
+    });
+
+    elApiKeyClear.addEventListener("click", () => {
+      localStorage.removeItem(API_KEY_STORAGE);
+      elApiKeyStatus.textContent = "Key removed.";
+      elApiKeyStatus.style.color = "var(--text-dim)";
+      refreshAiStatus();
+      setTimeout(() => { elApiKeyStatus.textContent = ""; }, 3000);
     });
 
     // === OCR (image upload) ===
