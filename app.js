@@ -1345,8 +1345,34 @@ Class Rank: 12 of 380</pre>
     document.addEventListener("dragover", (e) => { e.preventDefault(); });
     document.addEventListener("drop", (e) => { e.preventDefault(); });
 
+    function showImagePreview(file) {
+      const elPreview = document.getElementById("image-preview");
+      if (!elPreview) return;
+      // Revoke any previous object URL
+      const prevImg = elPreview.querySelector("img");
+      if (prevImg && prevImg.dataset.objurl) {
+        try { URL.revokeObjectURL(prevImg.dataset.objurl); } catch {}
+      }
+      const url = URL.createObjectURL(file);
+      const sizeKb = (file.size / 1024).toFixed(0);
+      elPreview.innerHTML = `
+        <div class="image-preview-head">
+          <span class="image-preview-name">${escapeHtml(file.name || "image")} · ${sizeKb} KB</span>
+          <button class="image-remove" type="button" aria-label="Remove">&times;</button>
+        </div>
+        <img src="${url}" alt="Uploaded preview" data-objurl="${url}" />
+      `;
+      elPreview.hidden = false;
+      elPreview.querySelector(".image-remove").addEventListener("click", () => {
+        try { URL.revokeObjectURL(url); } catch {}
+        elPreview.innerHTML = "";
+        elPreview.hidden = true;
+      });
+    }
+
     async function runOcrOnFile(file) {
       if (!file) return;
+      showImagePreview(file);
       elOcrProgress.innerHTML = `<span class="ocr-status">Preparing OCR engine...</span><div class="ocr-bar"><div></div></div>`;
       const bar = elOcrProgress.querySelector(".ocr-bar > div");
       try {

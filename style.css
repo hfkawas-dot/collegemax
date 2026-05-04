@@ -617,6 +617,50 @@ details .tip {
   background: var(--green);
   color: #003020;
 }
+
+/* === IMAGE PREVIEW === */
+.image-preview {
+  margin-top: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+.image-preview[hidden] { display: none; }
+.image-preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.image-preview-name {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-mute);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+  transition: color 0.15s;
+}
+.image-remove:hover { color: var(--red); }
+.image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
 .screenshot-zone:hover { border-color: var(--accent); background: var(--bg-2); }
 .screenshot-zone.drag-over {
   border-color: var(--accent);
