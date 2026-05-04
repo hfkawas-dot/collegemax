@@ -1282,51 +1282,94 @@ Class Rank: 12 of 380</pre>
     const elDropZone = document.getElementById("screenshot-zone");
     const elImageInput = document.getElementById("transcript-image");
     const elOcrProgress = document.getElementById("ocr-progress");
+    const elOcrStatusBadge = document.getElementById("ocr-status-badge");
+
+    // Preload Tesseract worker on demand (or as soon as user shows interest)
+    let tesseractWorker = null;
+    let tesseractWorkerPromise = null;
+    async function getTesseractWorker() {
+      if (tesseractWorker) return tesseractWorker;
+      if (tesseractWorkerPromise) return tesseractWorkerPromise;
+      if (typeof Tesseract === "undefined") {
+        throw new Error("OCR library failed to load. Check your internet connection (the library comes from a CDN).");
+      }
+      setOcrStatus("Loading OCR engine (one-time, ~5MB)...");
+      tesseractWorkerPromise = (async () => {
+        const w = await Tesseract.createWorker("eng");
+        tesseractWorker = w;
+        setOcrStatus("OCR ready");
+        return w;
+      })();
+      return tesseractWorkerPromise;
+    }
+    function setOcrStatus(msg) {
+      if (!elOcrStatusBadge) return;
+      elOcrStatusBadge.textContent = msg;
+      elOcrStatusBadge.className = msg === "OCR ready" ? "ocr-ready" : "ocr-loading";
+    }
+
+    // Kick off preload after a tick so the page renders first
+    setTimeout(() => {
+      getTesseractWorker().catch(err => {
+        console.warn("Tesseract preload failed:", err);
+        setOcrStatus("OCR unavailable");
+      });
+    }, 300);
 
     elDropZone.addEventListener("click", () => elImageInput.click());
-    elDropZone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      elDropZone.classList.add("drag-over");
-    });
-    elDropZone.addEventListener("dragleave", () => {
-      elDropZone.classList.remove("drag-over");
+    elDropZone.addEventListener("dragenter", (e) => { e.preventDefault(); elDropZone.classList.add("drag-over"); });
+    elDropZone.addEventListener("dragover", (e) => { e.preventDefault(); elDropZone.classList.add("drag-over"); });
+    elDropZone.addEventListener("dragleave", (e) => {
+      // Only remove if leaving the zone entirely (not a child)
+      if (!elDropZone.contains(e.relatedTarget)) {
+        elDropZone.classList.remove("drag-over");
+      }
     });
     elDropZone.addEventListener("drop", (e) => {
       e.preventDefault();
+      e.stopPropagation();
       elDropZone.classList.remove("drag-over");
       const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (file && file.type && file.type.startsWith("image/")) {
-        runOcrOnFile(file);
+      if (!file) {
+        elOcrProgress.innerHTML = `<span class="ocr-err">No file received from the drop. Try clicking the zone instead.</span>`;
+        return;
       }
+      if (!file.type || !file.type.startsWith("image/")) {
+        elOcrProgress.innerHTML = `<span class="ocr-err">That doesn't look like an image (${escapeHtml(file.type || "unknown type")}). Try a JPG or PNG.</span>`;
+        return;
+      }
+      runOcrOnFile(file);
     });
+
+    // Also block document-level drop so a misfire doesn't navigate away
+    document.addEventListener("dragover", (e) => { e.preventDefault(); });
+    document.addEventListener("drop", (e) => { e.preventDefault(); });
 
     async function runOcrOnFile(file) {
       if (!file) return;
-      if (typeof Tesseract === "undefined") {
-        elOcrProgress.innerHTML = `<span class="ocr-err">OCR engine still loading. Wait a moment then try again.</span>`;
-        return;
-      }
-      elOcrProgress.innerHTML = `<span class="ocr-status">Reading image (this can take 10-30 seconds)...</span><div class="ocr-bar"><div></div></div>`;
+      elOcrProgress.innerHTML = `<span class="ocr-status">Preparing OCR engine...</span><div class="ocr-bar"><div></div></div>`;
       const bar = elOcrProgress.querySelector(".ocr-bar > div");
       try {
-        const { data } = await Tesseract.recognize(file, "eng", {
-          logger: (m) => {
-            if (m.status === "recognizing text" && bar) {
-              bar.style.width = (m.progress * 100).toFixed(0) + "%";
-            }
-            if (m.status) {
-              const status = elOcrProgress.querySelector(".ocr-status");
-              if (status) status.textContent = m.status.charAt(0).toUpperCase() + m.status.slice(1) + (m.progress ? " (" + (m.progress*100).toFixed(0) + "%)" : "");
-            }
-          }
-        });
-        const text = (data && data.text) || "";
+        const worker = await getTesseractWorker();
+        const statusEl = elOcrProgress.querySelector(".ocr-status");
+        if (statusEl) statusEl.textContent = "Reading image (5-30 seconds)...";
+
+        // v5 createWorker has its own loggerless interface; recognize returns the data
+        const result = await worker.recognize(file);
+        const text = (result && result.data && result.data.text) || "";
+        if (bar) bar.style.width = "100%";
+
+        if (!text.trim()) {
+          elOcrProgress.innerHTML = `<span class="ocr-err">OCR returned empty text. The image may be too small or low-contrast. Try a clearer screenshot.</span>`;
+          return;
+        }
         elTranscript.value = text;
-        elOcrProgress.innerHTML = `<span class="ocr-ok">Image read. Parsing...</span>`;
+        elOcrProgress.innerHTML = `<span class="ocr-ok">Image read (${text.length} chars). Parsing...</span>`;
         runParse(text);
-        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 2000);
+        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 2500);
       } catch (err) {
-        elOcrProgress.innerHTML = `<span class="ocr-err">OCR failed: ${escapeHtml(err.message || String(err))}</span>`;
+        console.error("OCR failed:", err);
+        elOcrProgress.innerHTML = `<span class="ocr-err">OCR failed: ${escapeHtml(err.message || String(err))}<br><small>Open the browser console for full error details.</small></span>`;
       }
     }
 

@@ -595,6 +595,28 @@ details .tip {
   background: var(--bg);
   position: relative;
 }
+.screenshot-zone > * { pointer-events: none; }
+.screenshot-zone input[type="file"] { pointer-events: auto; }
+#ocr-status-badge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 3px 8px;
+  border-radius: 3px;
+}
+#ocr-status-badge.ocr-loading {
+  background: var(--bg-3);
+  color: var(--text-dim);
+  border: 1px solid var(--border-2);
+}
+#ocr-status-badge.ocr-ready {
+  background: var(--green);
+  color: #003020;
+}
 .screenshot-zone:hover { border-color: var(--accent); background: var(--bg-2); }
 .screenshot-zone.drag-over {
   border-color: var(--accent);
