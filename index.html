@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CollegeMax — Resume Builder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>CollegeMax</h1>
+      <span class="tagline">High-leverage activities for your college resume</span>
+      <span class="spacer"></span>
+      <button id="generate-btn" type="button">&#10024; Generate Idea</button>
+      <button id="export-btn" class="secondary" type="button">Export Resume</button>
+    </header>
+
+    <aside class="sidebar">
+      <h2>My Resume <span class="count" id="saved-count">0</span></h2>
+      <div id="saved-list"></div>
+      <textarea id="export-area" readonly></textarea>
+    </aside>
+
+    <main class="main">
+      <nav class="tabs">
+        <button class="tab active" data-tab="catalog" type="button">Activities</button>
+        <button class="tab" data-tab="profile" type="button">My Profile</button>
+        <button class="tab" data-tab="essay" type="button">Essay Studio</button>
+        <button class="tab" data-tab="colleges" type="button">College Odds</button>
+      </nav>
+
+      <section class="panel" id="panel-catalog">
+        <div class="controls">
+          <input id="search" type="text" placeholder="Search activities, tips, categories..." />
+          <select id="category-filter"></select>
+          <select id="tier-filter">
+            <option value="All">All tiers</option>
+            <option value="elite">Elite signal</option>
+            <option value="strong">Strong</option>
+            <option value="solid">Solid</option>
+          </select>
+        </div>
+        <div id="catalog" class="catalog"></div>
+      </section>
+
+      <section class="panel hidden" id="panel-profile">
+        <h2 class="panel-title">Your Profile</h2>
+        <p class="panel-sub">Used by the College Odds estimator and the Essay Studio. Stays in your browser only.</p>
+        <form id="profile-form" class="profile-form">
+          <label>Name<input name="name" type="text" placeholder="Alex Kim" /></label>
+          <label>Grade<select name="grade">
+            <option value="">Select</option>
+            <option>9</option><option>10</option><option>11</option><option>12</option>
+          </select></label>
+          <label>Unweighted GPA (0-4.0)<input name="unweightedGpa" type="number" step="0.01" min="0" max="4" placeholder="3.85" /></label>
+          <label>Weighted GPA (0-5.0)<input name="weightedGpa" type="number" step="0.01" min="0" max="5" placeholder="4.40" /></label>
+          <label>SAT (400-1600)<input name="sat" type="number" min="400" max="1600" placeholder="1480" /></label>
+          <label>ACT (1-36)<input name="act" type="number" min="1" max="36" placeholder="33" /></label>
+          <label>AP / IB / Honors classes (count)<input name="apCount" type="number" min="0" max="20" placeholder="6" /></label>
+          <label>Class rank — top __ %<input name="classRank" type="number" min="0" max="100" placeholder="5" /></label>
+          <label>Intended major<input name="intendedMajor" type="text" placeholder="Computer Science" /></label>
+          <label class="full">Things you like (comma-separated)<textarea name="likes" rows="2" placeholder="machine learning, climate policy, jazz piano"></textarea></label>
+          <label class="full">Things you do (any activity, even informal)<textarea name="doing" rows="3" placeholder="Robotics team, weekend tutoring, run a Discord with 200 members about chess strategy"></textarea></label>
+          <button type="submit" class="primary">Save Profile</button>
+          <span id="profile-saved-msg" class="muted"></span>
+        </form>
+      </section>
+
+      <section class="panel hidden" id="panel-essay">
+        <h2 class="panel-title">Essay Studio</h2>
+        <p class="panel-sub">Generate a personal-statement scaffold from your profile + activities, then grade the draft against admissions standards.</p>
+
+        <div class="essay-fields">
+          <label class="full">
+            <span class="field-label">Prompt</span>
+            <select id="essay-prompt"></select>
+          </label>
+          <label class="full">
+            <span class="field-label">What's this essay about?</span>
+            <input id="essay-topic" type="text" placeholder="e.g. founding my non-profit, growing up bilingual, the day I stopped wanting to be a doctor" />
+          </label>
+          <label class="full">
+            <span class="field-label">Specific things to mention (optional, comma-separated)</span>
+            <textarea id="essay-details" rows="2" placeholder="e.g. my grandmother's recipes, the smell of solder, the 11pm Discord call where everything broke"></textarea>
+          </label>
+        </div>
+
+        <div class="essay-controls">
+          <button id="essay-generate" type="button" class="primary">&#10024; Generate Draft</button>
+          <button id="essay-grade-btn" type="button">Grade My Essay</button>
+        </div>
+
+        <textarea id="essay-text" rows="14" placeholder="Paste or write your essay here, or click Generate Draft to get a personalized scaffold..."></textarea>
+
+        <div id="essay-report" class="essay-report"></div>
+      </section>
+
+      <section class="panel hidden" id="panel-colleges">
+        <h2 class="panel-title">College Odds</h2>
+        <p class="panel-sub">Heuristic estimate based on your profile + saved activities and public admit data. Not a guarantee — a calibration tool.</p>
+        <div class="college-controls">
+          <button id="recompute-odds" type="button" class="primary">Recalculate</button>
+          <span id="odds-stale" class="muted"></span>
+        </div>
+        <div id="college-list" class="college-list"></div>
+      </section>
+    </main>
+
+    <section class="chat">
+      <div class="chat-header">
+        <h2>Assistant</h2>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+      <div class="chat-input-row">
+        <input id="chat-input" type="text" placeholder="Tell me your interests..." />
+        <button id="chat-send" type="button">Send</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
