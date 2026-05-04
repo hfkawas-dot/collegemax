@@ -1379,8 +1379,10 @@ Class Rank: 12 of 380</pre>
       imgEl.addEventListener("load", () => {
         console.log("[CollegeMax] preview img loaded:", imgEl.naturalWidth + "x" + imgEl.naturalHeight);
       });
-      imgEl.addEventListener("error", (err) => {
-        console.error("[CollegeMax] preview img failed to load", err);
+      imgEl.addEventListener("error", () => {
+        // Only act if this img is STILL the active one (not replaced by a newer paste)
+        if (!imgEl.isConnected) return;
+        console.warn("[CollegeMax] preview img failed to load");
         elPreview.innerHTML = `<div class="image-preview-head"><span class="image-preview-label">Photo upload</span></div><div class="muted">Could not display the photo. The OCR'd text below should still work.</div>`;
       });
 
@@ -1435,41 +1437,55 @@ Class Rank: 12 of 380</pre>
       }
     });
 
-    // === CLIPBOARD PASTE: drop a screenshot anywhere in Quick Import ===
+    // === CLIPBOARD PASTE: pull an image out of clipboard, robustly ===
     function handleClipboardImagePaste(e) {
-      const items = e.clipboardData && e.clipboardData.items;
-      if (!items) return false;
-      for (const item of items) {
-        if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
-          const file = item.getAsFile();
-          if (file) {
-            e.preventDefault();
-            runOcrOnFile(file);
-            return true;
+      const cd = e.clipboardData;
+      console.log("[CollegeMax] paste event fired. clipboardData:", !!cd);
+      if (!cd) return false;
+
+      let imageFile = null;
+
+      // Modern API: clipboardData.files
+      if (cd.files && cd.files.length > 0) {
+        console.log("[CollegeMax] clipboard.files length:", cd.files.length);
+        for (const f of cd.files) {
+          console.log("[CollegeMax]   file:", f.name, "type:", f.type, "size:", f.size);
+          if (f.type && f.type.startsWith("image/")) { imageFile = f; break; }
+        }
+      }
+
+      // Fallback: clipboardData.items
+      if (!imageFile && cd.items) {
+        console.log("[CollegeMax] clipboard.items length:", cd.items.length);
+        for (const item of cd.items) {
+          console.log("[CollegeMax]   item kind:", item.kind, "type:", item.type);
+          if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+            const f = item.getAsFile();
+            if (f) { imageFile = f; break; }
           }
         }
       }
+
+      if (imageFile) {
+        e.preventDefault();
+        console.log("[CollegeMax] pasted image -> runOcrOnFile, size", imageFile.size);
+        runOcrOnFile(imageFile);
+        return true;
+      }
+      console.log("[CollegeMax] no image found in clipboard");
       return false;
     }
 
-    elTranscript.addEventListener("paste", handleClipboardImagePaste);
-
-    // Also catch paste anywhere in the Quick Import card while it's the focus area
-    const quickImportEl = document.querySelector(".quick-import");
-    if (quickImportEl) {
-      quickImportEl.addEventListener("paste", (e) => {
-        if (e.target === elTranscript) return; // textarea handled it
-        handleClipboardImagePaste(e);
-      });
-    }
-
-    // Global paste capture on Profile tab so Ctrl+V works without focusing the textarea
+    // Single paste handler at document level. The handler returns true when it
+    // found and handled an image (preventDefault'd already); otherwise the
+    // event continues normally so text paste still works in the textarea.
     document.addEventListener("paste", (e) => {
       const onProfile = !document.getElementById("panel-profile").classList.contains("hidden");
       if (!onProfile) return;
-      // If focus is in any input/textarea other than transcript, let that field handle paste
+      // If focus is on a non-transcript form field (api-key input, profile field),
+      // don't intercept — they may want to paste real text there.
       const active = document.activeElement;
-      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA") && active !== elTranscript) return;
+      if (active && active.tagName === "INPUT" && active !== elTranscript) return;
       handleClipboardImagePaste(e);
     });
 
