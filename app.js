@@ -852,6 +852,18 @@ if (typeof module !== "undefined") {
 // === UI WIRING (browser only) ===
 if (typeof document !== "undefined" && typeof window !== "undefined") {
   window.addEventListener("DOMContentLoaded", () => {
+    try {
+      initApp();
+    } catch (err) {
+      console.error("[CollegeMax] init crashed:", err);
+      const banner = document.createElement("div");
+      banner.style.cssText = "position:fixed;top:0;left:0;right:0;background:#f87171;color:#1a0000;padding:12px 20px;z-index:9999;font-family:system-ui;font-size:14px;font-weight:600;";
+      banner.innerHTML = `Initialization error. <strong>Hard refresh: Ctrl+Shift+R</strong> (or Cmd+Shift+R on Mac). <button onclick="this.parentElement.remove()" style="float:right;background:transparent;border:1px solid #1a0000;padding:4px 10px;border-radius:4px;font-weight:600;cursor:pointer">×</button>`;
+      document.body.prepend(banner);
+    }
+  });
+
+  function initApp() {
     let state = loadState();
     const elCatalog = document.getElementById("catalog");
     const elSavedList = document.getElementById("saved-list");
@@ -1591,5 +1603,5 @@ Class Rank: 12 of 380</pre>
       }
     }
     elRecompute.addEventListener("click", renderColleges);
-  });
+  }
 }
