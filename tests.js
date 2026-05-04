@@ -463,6 +463,108 @@ test("generateEssay: name appears in conclusion when provided", () => {
   assert(withName.draft.includes("Maya"), "name should appear in topic-mode conclusion");
 });
 
+// === TRANSCRIPT PARSER ===
+test("parseTranscript: empty input returns empty object", () => {
+  assertEq(parseTranscript(""), {});
+  assertEq(parseTranscript(null), {});
+  assertEq(parseTranscript(undefined), {});
+});
+
+test("parseTranscript: extracts unweighted GPA explicitly labeled", () => {
+  const r = parseTranscript("Unweighted GPA: 3.85");
+  assertEq(r.unweightedGpa, 3.85);
+});
+
+test("parseTranscript: extracts weighted GPA explicitly labeled", () => {
+  const r = parseTranscript("Weighted GPA: 4.32");
+  assertEq(r.weightedGpa, 4.32);
+});
+
+test("parseTranscript: extracts both weighted + unweighted", () => {
+  const r = parseTranscript("Cumulative GPA (Unweighted): 3.85\nWeighted GPA: 4.32");
+  assertEq(r.unweightedGpa, 3.85);
+  assertEq(r.weightedGpa, 4.32);
+});
+
+test("parseTranscript: plain GPA over 4.0 is treated as weighted", () => {
+  const r = parseTranscript("GPA: 4.21");
+  assertEq(r.weightedGpa, 4.21);
+});
+
+test("parseTranscript: plain GPA at or under 4.0 is treated as unweighted", () => {
+  const r = parseTranscript("GPA: 3.7");
+  assertEq(r.unweightedGpa, 3.7);
+});
+
+test("parseTranscript: extracts SAT", () => {
+  const r = parseTranscript("SAT: 1480");
+  assertEq(r.sat, 1480);
+});
+
+test("parseTranscript: extracts ACT but not when ambiguous with course names", () => {
+  const r1 = parseTranscript("ACT Composite: 33");
+  assertEq(r1.act, 33);
+  const r2 = parseTranscript("AP Government: A"); // should NOT mistakenly extract
+  assert(!r2.act, "should not pick up AP Government as ACT");
+});
+
+test("parseTranscript: counts AP courses (deduped)", () => {
+  const text = "AP Biology - A\nAP Calculus AB - A\nAP English Literature - B+\nAP Biology - A";
+  const r = parseTranscript(text);
+  assertEq(r.apCount, 3);
+});
+
+test("parseTranscript: counts mix of AP, IB, and Honors", () => {
+  const text = "AP Biology - A\nIB History - 5\nHonors Chemistry - A";
+  const r = parseTranscript(text);
+  assertEq(r.apCount, 3);
+});
+
+test("parseTranscript: class rank as N of M -> percentile", () => {
+  const r = parseTranscript("Class Rank: 12 of 380");
+  assertEq(r.classRank, 3); // 12/380 = 3.16% -> 3
+});
+
+test("parseTranscript: top X% pattern", () => {
+  const r = parseTranscript("Top 5% of class");
+  assertEq(r.classRank, 5);
+});
+
+test("parseTranscript: full realistic transcript blob", () => {
+  const blob = `
+    Cumulative GPA (Unweighted): 3.92
+    Weighted GPA: 4.45
+    SAT: 1520
+    Class Rank: 8 of 412
+
+    AP Biology - A
+    AP Chemistry - A
+    AP Calculus BC - B+
+    AP US History - A
+    Honors English - A
+    Honors Spanish - A
+
+    Intended Major: Bioengineering
+  `;
+  const r = parseTranscript(blob);
+  assertEq(r.unweightedGpa, 3.92);
+  assertEq(r.weightedGpa, 4.45);
+  assertEq(r.sat, 1520);
+  assertEq(r.apCount, 6);
+  assertEq(r.classRank, 2); // 8/412 -> 1.94 -> rounded to 2
+  assert(r.intendedMajor && r.intendedMajor.toLowerCase().includes("bioengineering"));
+});
+
+test("parseTranscript: ignores out-of-range numbers", () => {
+  const r = parseTranscript("SAT: 9999");
+  assert(!r.sat, "should reject 9999 as SAT");
+});
+
+test("parseTranscript: ignores invalid rank (pos > total)", () => {
+  const r = parseTranscript("Rank 500 of 100");
+  assert(!r.classRank);
+});
+
 // === RUNNER ===
 function runTests() {
   const log = document.getElementById("test-output");

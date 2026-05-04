@@ -346,6 +346,91 @@ function rankColleges(profile, savedIds, colleges, source) {
   }).sort((a, b) => b.probability - a.probability);
 }
 
+// === TRANSCRIPT PARSER ===
+// Best-effort extraction of GPA/SAT/ACT/AP-count/class-rank from any pasted text.
+// Returns an object with whatever fields it could detect.
+function parseTranscript(text) {
+  const out = {};
+  if (!text || typeof text !== "string") return out;
+  const t = text;
+
+  // ---- Unweighted GPA ----
+  let m = t.match(/un[-\s]*weighted\s*(?:gpa)?[\s:=]*(\d\.\d{1,3})/i)
+       || t.match(/gpa\s*\(?\s*un[-\s]*weighted\s*\)?[\s:=]*(\d\.\d{1,3})/i)
+       || t.match(/\buw\s*gpa[\s:=]*(\d\.\d{1,3})/i);
+  if (m) out.unweightedGpa = parseFloat(m[1]);
+
+  // ---- Weighted GPA ----
+  m = t.match(/weighted\s*(?:gpa)?[\s:=]*(\d\.\d{1,3})/i)
+   || t.match(/gpa\s*\(?\s*weighted\s*\)?[\s:=]*(\d\.\d{1,3})/i)
+   || t.match(/\bw\s*gpa[\s:=]*(\d\.\d{1,3})/i);
+  if (m) out.weightedGpa = parseFloat(m[1]);
+
+  // ---- Plain "GPA: X.XX" if no specific match yet ----
+  if (!out.unweightedGpa && !out.weightedGpa) {
+    m = t.match(/(?:cumulative\s+)?gpa[\s:=]*(\d\.\d{1,3})/i);
+    if (m) {
+      const val = parseFloat(m[1]);
+      if (val > 4.0) out.weightedGpa = val;
+      else out.unweightedGpa = val;
+    }
+  }
+
+  // ---- SAT (400-1600 near "SAT") ----
+  m = t.match(/\bsat[\s:=-]*(\d{3,4})\b/i)
+   || t.match(/\b(\d{3,4})\s*(?:total\s*)?sat\b/i);
+  if (m) {
+    const val = parseInt(m[1], 10);
+    if (val >= 400 && val <= 1600) out.sat = val;
+  }
+
+  // ---- ACT (1-36 near "ACT" but not "AP", "ACT BIO" course, etc.) ----
+  m = t.match(/\bact\s*(?:composite|score)?[\s:=-]+(\d{1,2})\b/i);
+  if (m) {
+    const val = parseInt(m[1], 10);
+    if (val >= 1 && val <= 36) out.act = val;
+  }
+
+  // ---- AP / Honors / IB course count ----
+  // Match "AP <CapitalizedWord>" patterns (course names)
+  const apMatches = t.match(/\bAP\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2}/g) || [];
+  const ibMatches = t.match(/\bIB\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2}/g) || [];
+  const honorsMatches = t.match(/\bhonors\s+[A-Za-z]+/gi) || [];
+  // Dedupe by lowercased course name
+  const allRigorous = new Set();
+  for (const s of apMatches) allRigorous.add(s.toLowerCase().trim());
+  for (const s of ibMatches) allRigorous.add(s.toLowerCase().trim());
+  for (const s of honorsMatches) allRigorous.add(s.toLowerCase().trim());
+  if (allRigorous.size > 0) out.apCount = allRigorous.size;
+
+  // ---- Class rank: "Rank: 5 of 412" or "Rank 5/412" or "5/412" ----
+  m = t.match(/(?:class\s+)?rank(?:ed|ing)?[\s:#]*(\d+)\s*(?:of|out\s+of|\/)\s*(\d+)/i);
+  if (m) {
+    const pos = parseInt(m[1], 10);
+    const total = parseInt(m[2], 10);
+    if (total > 0 && pos > 0 && pos <= total) {
+      out.classRank = Math.max(1, Math.round((pos / total) * 100));
+    }
+  }
+  // ---- "top X%" pattern ----
+  if (!out.classRank) {
+    m = t.match(/top\s*(\d+)\s*%/i);
+    if (m) {
+      const val = parseInt(m[1], 10);
+      if (val > 0 && val <= 100) out.classRank = val;
+    }
+  }
+
+  // ---- Intended major ----
+  m = t.match(/(?:intended\s+)?major\s*[:=-]+\s*([A-Za-z][A-Za-z\s&]*?)(?:[\n.]|$)/i);
+  if (m) {
+    const major = m[1].trim();
+    if (major.length > 2 && major.length < 60) out.intendedMajor = major;
+  }
+
+  return out;
+}
+
 // === ESSAY GRADER ===
 function gradeEssay(text) {
   text = (text || "").trim();
@@ -558,7 +643,7 @@ if (typeof module !== "undefined") {
     filterActivities, suggestActivities,
     botReply, exportResume,
     estimateOdds, rankColleges,
-    gradeEssay, generateEssay,
+    gradeEssay, generateEssay, parseTranscript,
     STORAGE_KEY, INTEREST_MAP
   };
 }
@@ -794,6 +879,45 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
         el.value = (v === null || v === undefined) ? "" : v;
       }
     }
+    // Quick-import: parse pasted transcript and prefill the form
+    const elTranscript = document.getElementById("transcript-input");
+    const elParseBtn = document.getElementById("parse-transcript");
+    const elParseResult = document.getElementById("parse-result");
+    elParseBtn.addEventListener("click", () => {
+      const parsed = parseTranscript(elTranscript.value);
+      const fields = ["unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
+      let applied = 0;
+      const appliedList = [];
+      for (const f of fields) {
+        if (parsed[f] !== undefined && parsed[f] !== null) {
+          if (profileForm.elements[f]) {
+            profileForm.elements[f].value = parsed[f];
+            state.profile[f] = parsed[f];
+            applied++;
+            appliedList.push(f);
+          }
+        }
+      }
+      persist();
+      if (applied === 0) {
+        elParseResult.textContent = "Could not detect anything. Try the format in the placeholder.";
+        elParseResult.style.color = "var(--orange)";
+      } else {
+        const labels = {
+          unweightedGpa: "Unweighted GPA",
+          weightedGpa: "Weighted GPA",
+          sat: "SAT",
+          act: "ACT",
+          apCount: "AP/Honors count",
+          classRank: "Class rank",
+          intendedMajor: "Major"
+        };
+        elParseResult.textContent = "Filled: " + appliedList.map(f => labels[f]).join(", ") + ". Review below and Save.";
+        elParseResult.style.color = "var(--green)";
+      }
+      setTimeout(() => { elParseResult.textContent = ""; }, 6000);
+    });
+
     profileForm.addEventListener("submit", (e) => {
       e.preventDefault();
       const fd = new FormData(profileForm);
@@ -913,15 +1037,37 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     const elRecompute = document.getElementById("recompute-odds");
     const elOddsStale = document.getElementById("odds-stale");
 
+    function profileHasMinimumData(p) {
+      const hasGpa = (p.unweightedGpa || p.weightedGpa);
+      const hasScore = (p.sat || p.act);
+      return !!(hasGpa && hasScore);
+    }
+
     function renderColleges() {
-      const ranked = rankColleges(state.profile, state.saved, COLLEGES);
+      const profile = state.profile;
       elCollegeList.innerHTML = "";
-      const profileBlank = !state.profile.unweightedGpa && !state.profile.weightedGpa && !state.profile.sat && !state.profile.act;
-      if (profileBlank) {
-        elOddsStale.textContent = "Tip: fill out My Profile for sharper estimates.";
-      } else {
-        elOddsStale.textContent = "";
+      elOddsStale.textContent = "";
+
+      if (!profileHasMinimumData(profile)) {
+        elCollegeList.innerHTML = `
+          <div class="empty-state">
+            <h3>Fill your profile first</h3>
+            <p>Odds are personal. Without your GPA and a test score, the only number we could show you is the school's raw admit rate, which is the same for every student. That isn't useful to you.</p>
+            <p>Add at least:</p>
+            <ul>
+              <li>Unweighted or weighted GPA</li>
+              <li>SAT or ACT score</li>
+            </ul>
+            <button id="goto-profile" type="button" class="primary">Open My Profile</button>
+          </div>
+        `;
+        document.getElementById("goto-profile").addEventListener("click", () => {
+          document.querySelector('[data-tab="profile"]').click();
+        });
+        return;
       }
+
+      const ranked = rankColleges(profile, state.saved, COLLEGES);
       for (const r of ranked) {
         const row = document.createElement("div");
         row.className = "college-row";
