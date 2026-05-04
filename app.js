@@ -859,10 +859,6 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     const elSearch = document.getElementById("search");
     const elCategoryFilter = document.getElementById("category-filter");
     const elTierFilter = document.getElementById("tier-filter");
-    const elChatLog = document.getElementById("chat-log");
-    const elChatInput = document.getElementById("chat-input");
-    const elChatSend = document.getElementById("chat-send");
-    const elGenerate = document.getElementById("generate-btn");
     const elExport = document.getElementById("export-btn");
     const elExportArea = document.getElementById("export-area");
 
@@ -964,84 +960,19 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       }
     }
 
-    function appendChat(role, text, suggestions) {
-      const msg = document.createElement("div");
-      msg.className = "chat-msg " + role;
-      msg.innerHTML = `<div class="chat-bubble">${escapeHtml(text)}</div>`;
-      if (suggestions && suggestions.length) {
-        const sugWrap = document.createElement("div");
-        sugWrap.className = "chat-suggestions";
-        for (const id of suggestions) {
-          const a = findActivity(id);
-          if (!a) continue;
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "suggestion-pill" + (isSaved(state, id) ? " saved" : "");
-          btn.textContent = (isSaved(state, id) ? "✓ " : "+ ") + a.title;
-          btn.addEventListener("click", () => {
-            toggleSaved(state, id);
-            persist();
-            renderCatalog();
-            renderSaved();
-            btn.className = "suggestion-pill" + (isSaved(state, id) ? " saved" : "");
-            btn.textContent = (isSaved(state, id) ? "✓ " : "+ ") + a.title;
-          });
-          sugWrap.appendChild(btn);
-        }
-        msg.appendChild(sugWrap);
-      }
-      elChatLog.appendChild(msg);
-      elChatLog.scrollTop = elChatLog.scrollHeight;
-    }
-
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-    }
-
-    function sendChatMessage() {
-      const text = elChatInput.value.trim();
-      if (!text) return;
-      appendChat("user", text);
-      state.chat.push({ role: "user", text, ts: Date.now() });
-      const reply = botReply(text, state);
-      appendChat("bot", reply.text, reply.suggestions);
-      state.chat.push({ role: "bot", text: reply.text, suggestions: reply.suggestions, ts: Date.now() });
-      persist();
-      elChatInput.value = "";
-    }
-
-    function generateOne() {
-      const seedInterests = state.profile.interests.length
-        ? state.profile.interests
-        : Object.keys(INTEREST_MAP).slice(0, 3);
-      const picks = suggestActivities(ACTIVITIES, seedInterests, { limit: 1, excludeIds: state.saved });
-      if (picks.length === 0) {
-        appendChat("bot", "You've already saved every top match. Try clearing some, or browse the full catalog.");
-        return;
-      }
-      const pick = picks[0];
-      appendChat("bot", "One-click pick for you:", [pick.id]);
     }
 
     // Initial render
     renderCategoryOptions();
     renderCatalog();
     renderSaved();
-    if (state.chat.length === 0) {
-      appendChat("bot", "Hi! Tell me what you care about (medicine, tech, writing, etc.) and I'll suggest the highest-leverage activities for your college resume.");
-    } else {
-      for (const m of state.chat) appendChat(m.role, m.text, m.suggestions);
-    }
 
     // Wire events
     elSearch.addEventListener("input", renderCatalog);
     elCategoryFilter.addEventListener("change", renderCatalog);
     elTierFilter.addEventListener("change", renderCatalog);
-    elChatSend.addEventListener("click", sendChatMessage);
-    elChatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") sendChatMessage();
-    });
-    elGenerate.addEventListener("click", generateOne);
     elExport.addEventListener("click", () => {
       elExportArea.value = exportResume(state);
       elExportArea.style.display = "block";

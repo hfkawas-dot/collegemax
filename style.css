@@ -46,11 +46,11 @@ a:hover { text-decoration: underline; }
 /* === LAYOUT === */
 .app {
   display: grid;
-  grid-template-columns: 300px 1fr 340px;
+  grid-template-columns: 300px 1fr;
   grid-template-rows: 60px 1fr;
   grid-template-areas:
-    "topbar topbar topbar"
-    "sidebar main chat";
+    "topbar topbar"
+    "sidebar main";
   height: 100vh;
   overflow: hidden;
 }
@@ -1342,14 +1342,13 @@ details .tip {
 @media (max-width: 1024px) {
   .app {
     grid-template-columns: 1fr;
-    grid-template-rows: 60px auto auto auto;
+    grid-template-rows: 60px auto auto;
     grid-template-areas:
       "topbar"
       "main"
-      "chat"
       "sidebar";
   }
-  .sidebar, .chat { border: none; border-top: 1px solid var(--border); max-height: 400px; }
+  .sidebar { border: none; border-top: 1px solid var(--border); max-height: 400px; }
   .topbar .tagline { display: none; }
   .profile-form { grid-template-columns: 1fr; }
   .profile-form label.full,
