@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js" defer></script>
 </head>
 <body>
   <div class="app">
@@ -69,9 +70,13 @@ Honors Chemistry - B+
 Class Rank: 12 of 380
 Intended Major: Computer Science"></textarea>
           <div class="qi-actions">
-            <button id="parse-transcript" type="button" class="primary">Auto-fill from transcript</button>
-            <span id="parse-result" class="muted"></span>
+            <button id="parse-transcript" type="button" class="primary">Auto-fill from text</button>
+            <span class="qi-divider">or</span>
+            <button id="upload-image-btn" type="button" class="secondary">📷 Upload photo of transcript</button>
+            <input id="transcript-image" type="file" accept="image/*" style="display:none" />
           </div>
+          <div id="ocr-progress" class="ocr-progress"></div>
+          <div id="parse-result"></div>
         </div>
 
         <h3 class="form-section-title">Or fill in manually</h3>

@@ -347,64 +347,111 @@ function rankColleges(profile, savedIds, colleges, source) {
 }
 
 // === TRANSCRIPT PARSER ===
-// Best-effort extraction of GPA/SAT/ACT/AP-count/class-rank from any pasted text.
-// Returns an object with whatever fields it could detect.
+// Best-effort extraction from any pasted text or OCR output.
+// Returns { unweightedGpa, weightedGpa, sat, act, apCount, classRank, intendedMajor }.
 function parseTranscript(text) {
   const out = {};
   if (!text || typeof text !== "string") return out;
   const t = text;
 
-  // ---- Unweighted GPA ----
-  let m = t.match(/un[-\s]*weighted\s*(?:gpa)?[\s:=]*(\d\.\d{1,3})/i)
+  // ---- Unweighted GPA (explicit label) ----
+  let m = t.match(/un[-\s]*weighted\s*(?:gpa|grade\s*point\s*average)?[\s:=]*(\d\.\d{1,3})/i)
        || t.match(/gpa\s*\(?\s*un[-\s]*weighted\s*\)?[\s:=]*(\d\.\d{1,3})/i)
        || t.match(/\buw\s*gpa[\s:=]*(\d\.\d{1,3})/i);
   if (m) out.unweightedGpa = parseFloat(m[1]);
 
-  // ---- Weighted GPA ----
-  m = t.match(/weighted\s*(?:gpa)?[\s:=]*(\d\.\d{1,3})/i)
+  // ---- Weighted GPA (explicit label) ----
+  m = t.match(/weighted\s*(?:gpa|grade\s*point\s*average)?[\s:=]*(\d\.\d{1,3})/i)
    || t.match(/gpa\s*\(?\s*weighted\s*\)?[\s:=]*(\d\.\d{1,3})/i)
    || t.match(/\bw\s*gpa[\s:=]*(\d\.\d{1,3})/i);
   if (m) out.weightedGpa = parseFloat(m[1]);
 
-  // ---- Plain "GPA: X.XX" if no specific match yet ----
-  if (!out.unweightedGpa && !out.weightedGpa) {
-    m = t.match(/(?:cumulative\s+)?gpa[\s:=]*(\d\.\d{1,3})/i);
+  // ---- "X.XX/4.0" -> unweighted; "X.XX/5.0" -> weighted ----
+  if (!out.unweightedGpa) {
+    m = t.match(/(\d\.\d{1,3})\s*\/\s*4(?:\.0+)?\b/);
     if (m) {
       const val = parseFloat(m[1]);
-      if (val > 4.0) out.weightedGpa = val;
-      else out.unweightedGpa = val;
+      if (val >= 0 && val <= 4.0) out.unweightedGpa = val;
+    }
+  }
+  if (!out.weightedGpa) {
+    m = t.match(/(\d\.\d{1,3})\s*\/\s*5(?:\.0+)?\b/);
+    if (m) {
+      const val = parseFloat(m[1]);
+      if (val >= 0 && val <= 5.0) out.weightedGpa = val;
     }
   }
 
-  // ---- SAT (400-1600 near "SAT") ----
-  m = t.match(/\bsat[\s:=-]*(\d{3,4})\b/i)
-   || t.match(/\b(\d{3,4})\s*(?:total\s*)?sat\b/i);
+  // ---- Plain "GPA: X.XX" / "GPA X.XX" / "Cumulative: X.XX" / "Cumulative GPA X.XX" ----
+  if (!out.unweightedGpa && !out.weightedGpa) {
+    m = t.match(/(?:cumulative\s+)?gpa\s*[:=]?\s*(\d\.\d{1,3})/i)
+     || t.match(/cumulative[\s:=]+(\d\.\d{1,3})/i)
+     || t.match(/grade\s*point\s*average[\s:=]+(\d\.\d{1,3})/i);
+    if (m) {
+      const val = parseFloat(m[1]);
+      if (val > 4.0) out.weightedGpa = val;
+      else if (val >= 1.0) out.unweightedGpa = val;
+    }
+  }
+
+  // ---- Bare GPA in conversational text: "I have a 3.85" near "GPA" ----
+  if (!out.unweightedGpa && !out.weightedGpa) {
+    m = t.match(/(\d\.\d{1,3})\s+(?:gpa|cumulative|unweighted|weighted)/i);
+    if (m) {
+      const val = parseFloat(m[1]);
+      if (val > 4.0) out.weightedGpa = val;
+      else if (val >= 1.0) out.unweightedGpa = val;
+    }
+  }
+
+  // ---- SAT ----
+  m = t.match(/\bsat[\s:=-]+(\d{3,4})\b/i)
+   || t.match(/\b(\d{3,4})\s*(?:total\s*)?(?:on\s+(?:the\s+|my\s+)?)?sat\b/i)
+   || t.match(/sat\s*(?:score|composite|total)?[\s:=]+(\d{3,4})/i)
+   || t.match(/scored?\s+(?:a\s+)?(\d{3,4})\s+on\s+(?:the\s+)?sat/i);
   if (m) {
     const val = parseInt(m[1], 10);
     if (val >= 400 && val <= 1600) out.sat = val;
   }
 
-  // ---- ACT (1-36 near "ACT" but not "AP", "ACT BIO" course, etc.) ----
-  m = t.match(/\bact\s*(?:composite|score)?[\s:=-]+(\d{1,2})\b/i);
+  // ---- ACT (avoid course names like "AP Government") ----
+  m = t.match(/\bact\s*(?:composite|score|total)?[\s:=-]+(\d{1,2})\b/i)
+   || t.match(/\b(\d{1,2})\s*(?:on\s+(?:the\s+)?)?act\b/i)
+   || t.match(/scored?\s+(?:a\s+)?(\d{1,2})\s+on\s+(?:the\s+)?act/i);
   if (m) {
     const val = parseInt(m[1], 10);
-    if (val >= 1 && val <= 36) out.act = val;
+    if (val >= 10 && val <= 36) out.act = val;
   }
 
-  // ---- AP / Honors / IB course count ----
-  // Match "AP <CapitalizedWord>" patterns (course names)
-  const apMatches = t.match(/\bAP\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2}/g) || [];
-  const ibMatches = t.match(/\bIB\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2}/g) || [];
-  const honorsMatches = t.match(/\bhonors\s+[A-Za-z]+/gi) || [];
-  // Dedupe by lowercased course name
+  // ---- AP/IB/Honors course count ----
+  // 1. Course-name patterns: "AP Biology", "IB History", "Honors English"
+  const apMatches = t.match(/\bAP\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z&]+){0,2}/g) || [];
+  const ibMatches = t.match(/\bIB\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z&]+){0,2}/g) || [];
+  const honorsMatches = t.match(/\bhonors\s+[A-Za-z]+(?:\s+[A-Za-z]+)?/gi) || [];
   const allRigorous = new Set();
   for (const s of apMatches) allRigorous.add(s.toLowerCase().trim());
   for (const s of ibMatches) allRigorous.add(s.toLowerCase().trim());
   for (const s of honorsMatches) allRigorous.add(s.toLowerCase().trim());
   if (allRigorous.size > 0) out.apCount = allRigorous.size;
 
-  // ---- Class rank: "Rank: 5 of 412" or "Rank 5/412" or "5/412" ----
-  m = t.match(/(?:class\s+)?rank(?:ed|ing)?[\s:#]*(\d+)\s*(?:of|out\s+of|\/)\s*(\d+)/i);
+  // 2. "X AP classes/courses/exams" or "X APs" — overrides if larger
+  const countPatterns = [
+    /(\d+)\s+ap\s+(?:classes|courses|exams|tests)/i,
+    /(\d+)\s+aps?\b/i,
+    /taken\s+(\d+)\s+ap/i,
+    /total\s+ap[\s:=]*(\d+)/i
+  ];
+  for (const pat of countPatterns) {
+    const cm = t.match(pat);
+    if (cm) {
+      const val = parseInt(cm[1], 10);
+      if (val >= 0 && val <= 30 && val > (out.apCount || 0)) out.apCount = val;
+    }
+  }
+
+  // ---- Class rank: "Rank: 5 of 412" / "5 of 412" / "5/412" ----
+  m = t.match(/(?:class\s+)?rank(?:ed|ing)?[\s:#]*(\d+)\s*(?:of|out\s+of|\/)\s*(\d+)/i)
+   || t.match(/(\d+)\s*(?:of|out\s+of|\/)\s*(\d+)\s+(?:in\s+)?(?:my\s+)?class/i);
   if (m) {
     const pos = parseInt(m[1], 10);
     const total = parseInt(m[2], 10);
@@ -412,6 +459,7 @@ function parseTranscript(text) {
       out.classRank = Math.max(1, Math.round((pos / total) * 100));
     }
   }
+
   // ---- "top X%" pattern ----
   if (!out.classRank) {
     m = t.match(/top\s*(\d+)\s*%/i);
@@ -422,7 +470,9 @@ function parseTranscript(text) {
   }
 
   // ---- Intended major ----
-  m = t.match(/(?:intended\s+)?major\s*[:=-]+\s*([A-Za-z][A-Za-z\s&]*?)(?:[\n.]|$)/i);
+  m = t.match(/(?:intended|prospective|planning\s+to\s+study|want\s+to\s+study|plan\s+to\s+major\s+in|major\s+in)?\s*major\s*[:=-]+\s*([A-Za-z][A-Za-z\s&]*?)(?:[\n.,]|$)/i)
+   || t.match(/major\s+in\s+([A-Za-z][A-Za-z\s&]*?)(?:[\n.,]|$)/i)
+   || t.match(/study(?:ing)?\s+([A-Z][A-Za-z\s&]*?)(?:[\n.,]|$)/);
   if (m) {
     const major = m[1].trim();
     if (major.length > 2 && major.length < 60) out.intendedMajor = major;
@@ -883,39 +933,115 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     const elTranscript = document.getElementById("transcript-input");
     const elParseBtn = document.getElementById("parse-transcript");
     const elParseResult = document.getElementById("parse-result");
-    elParseBtn.addEventListener("click", () => {
-      const parsed = parseTranscript(elTranscript.value);
+    function runParse(rawText) {
+      const parsed = parseTranscript(rawText);
       const fields = ["unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
-      let applied = 0;
-      const appliedList = [];
+      const labels = {
+        unweightedGpa: "Unweighted GPA",
+        weightedGpa: "Weighted GPA",
+        sat: "SAT",
+        act: "ACT",
+        apCount: "AP/Honors count",
+        classRank: "Class rank %",
+        intendedMajor: "Major"
+      };
+      const found = [];
+      const missed = [];
       for (const f of fields) {
-        if (parsed[f] !== undefined && parsed[f] !== null) {
+        if (parsed[f] !== undefined && parsed[f] !== null && parsed[f] !== "") {
           if (profileForm.elements[f]) {
             profileForm.elements[f].value = parsed[f];
             state.profile[f] = parsed[f];
-            applied++;
-            appliedList.push(f);
+            found.push({ field: f, label: labels[f], value: parsed[f] });
           }
+        } else {
+          missed.push(labels[f]);
         }
       }
       persist();
-      if (applied === 0) {
-        elParseResult.textContent = "Could not detect anything. Try the format in the placeholder.";
-        elParseResult.style.color = "var(--orange)";
+      renderParseReport(found, missed, rawText);
+    }
+
+    function renderParseReport(found, missed, rawText) {
+      elParseResult.innerHTML = "";
+      const wrap = document.createElement("div");
+      wrap.className = "parse-report";
+
+      if (found.length === 0) {
+        wrap.innerHTML = `
+          <div class="parse-empty">
+            <strong>Did not detect anything.</strong>
+            <p>Try a format like:</p>
+            <pre>GPA: 3.85
+Weighted GPA: 4.20
+SAT: 1480
+AP Biology, AP Calculus AB
+Class Rank: 12 of 380</pre>
+          </div>
+        `;
       } else {
-        const labels = {
-          unweightedGpa: "Unweighted GPA",
-          weightedGpa: "Weighted GPA",
-          sat: "SAT",
-          act: "ACT",
-          apCount: "AP/Honors count",
-          classRank: "Class rank",
-          intendedMajor: "Major"
-        };
-        elParseResult.textContent = "Filled: " + appliedList.map(f => labels[f]).join(", ") + ". Review below and Save.";
-        elParseResult.style.color = "var(--green)";
+        const foundHtml = found.map(f =>
+          `<li><span class="pill-found">found</span> <strong>${escapeHtml(f.label)}</strong>: ${escapeHtml(String(f.value))}</li>`
+        ).join("");
+        const missedHtml = missed.length
+          ? `<details class="parse-missed-details"><summary>${missed.length} field${missed.length === 1 ? "" : "s"} not detected (click)</summary><ul>${
+              missed.map(m => `<li><span class="pill-missed">missing</span> ${escapeHtml(m)}</li>`).join("")
+            }</ul></details>`
+          : "";
+        wrap.innerHTML = `
+          <div class="parse-success">
+            <strong>${found.length} field${found.length === 1 ? "" : "s"} filled in.</strong>
+            Review below and click <em>Save Profile</em>.
+          </div>
+          <ul class="parse-found-list">${foundHtml}</ul>
+          ${missedHtml}
+        `;
       }
-      setTimeout(() => { elParseResult.textContent = ""; }, 6000);
+      elParseResult.appendChild(wrap);
+    }
+
+    elParseBtn.addEventListener("click", () => {
+      runParse(elTranscript.value);
+    });
+
+    // === OCR (image upload) ===
+    const elUploadBtn = document.getElementById("upload-image-btn");
+    const elImageInput = document.getElementById("transcript-image");
+    const elOcrProgress = document.getElementById("ocr-progress");
+
+    elUploadBtn.addEventListener("click", () => elImageInput.click());
+
+    elImageInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (typeof Tesseract === "undefined") {
+        elOcrProgress.innerHTML = `<span class="ocr-err">OCR engine still loading. Wait a moment then try again.</span>`;
+        return;
+      }
+      elOcrProgress.innerHTML = `<span class="ocr-status">Reading image (this can take 10-30 seconds)...</span><div class="ocr-bar"><div></div></div>`;
+      const bar = elOcrProgress.querySelector(".ocr-bar > div");
+      try {
+        const { data } = await Tesseract.recognize(file, "eng", {
+          logger: (m) => {
+            if (m.status === "recognizing text" && bar) {
+              bar.style.width = (m.progress * 100).toFixed(0) + "%";
+            }
+            if (m.status) {
+              const status = elOcrProgress.querySelector(".ocr-status");
+              if (status) status.textContent = m.status.charAt(0).toUpperCase() + m.status.slice(1) + (m.progress ? " (" + (m.progress*100).toFixed(0) + "%)" : "");
+            }
+          }
+        });
+        const text = (data && data.text) || "";
+        elTranscript.value = text;
+        elOcrProgress.innerHTML = `<span class="ocr-ok">Image read. Parsing...</span>`;
+        runParse(text);
+        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 2000);
+      } catch (err) {
+        elOcrProgress.innerHTML = `<span class="ocr-err">OCR failed: ${escapeHtml(err.message || String(err))}</span>`;
+      } finally {
+        elImageInput.value = ""; // allow re-upload of same file
+      }
     });
 
     profileForm.addEventListener("submit", (e) => {

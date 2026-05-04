@@ -565,6 +565,73 @@ test("parseTranscript: ignores invalid rank (pos > total)", () => {
   assert(!r.classRank);
 });
 
+test("parseTranscript: handles slash-denominator GPA (3.85/4.0)", () => {
+  const r = parseTranscript("GPA 3.85/4.0");
+  assertEq(r.unweightedGpa, 3.85);
+});
+
+test("parseTranscript: handles weighted slash format (4.45/5.0)", () => {
+  const r = parseTranscript("4.45/5.0 weighted");
+  assertEq(r.weightedGpa, 4.45);
+});
+
+test("parseTranscript: handles conversational SAT phrasing", () => {
+  const r1 = parseTranscript("I scored a 1480 on the SAT");
+  assertEq(r1.sat, 1480);
+  const r2 = parseTranscript("got 1520 on SAT");
+  assertEq(r2.sat, 1520);
+});
+
+test("parseTranscript: handles conversational ACT phrasing", () => {
+  const r1 = parseTranscript("I scored a 33 on the ACT");
+  assertEq(r1.act, 33);
+});
+
+test("parseTranscript: ignores low ACT-shaped numbers like '4'", () => {
+  const r = parseTranscript("ACT score: 4"); // way too low
+  assert(!r.act, "should not accept ACT < 10");
+});
+
+test("parseTranscript: 'X AP courses' phrase counts", () => {
+  const r = parseTranscript("I have taken 8 AP courses.");
+  assertEq(r.apCount, 8);
+});
+
+test("parseTranscript: '6 APs' counts", () => {
+  const r = parseTranscript("Taking 6 APs this year.");
+  assertEq(r.apCount, 6);
+});
+
+test("parseTranscript: course-listing beats explicit count when listing is bigger", () => {
+  // 4 listed APs but says "3 APs" — listed wins (it's more specific)
+  const text = "AP Bio, AP Chem, AP Calc AB, AP US History. I've taken 3 APs.";
+  const r = parseTranscript(text);
+  // The 4 distinct course names should be detected
+  assertEq(r.apCount, 4);
+});
+
+test("parseTranscript: bare GPA prefix 'I have a 3.85 GPA'", () => {
+  const r = parseTranscript("I have a 3.85 GPA and 1450 SAT");
+  assertEq(r.unweightedGpa, 3.85);
+  assertEq(r.sat, 1450);
+});
+
+test("parseTranscript: 'major in Computer Science'", () => {
+  const r = parseTranscript("I want to major in Computer Science.");
+  assert(r.intendedMajor && r.intendedMajor.toLowerCase().includes("computer science"));
+});
+
+test("parseTranscript: accepts noisy OCR-like text with extra spaces", () => {
+  const ocrLike = `  Cumulative   GPA :  3.85
+  S A T  Score:  1480
+
+  AP  Biology  -  A
+  AP  Chemistry - A `;
+  const r = parseTranscript(ocrLike);
+  // Some patterns won't match perfectly with broken whitespace, but at least GPA should work
+  assertEq(r.unweightedGpa, 3.85);
+});
+
 // === RUNNER ===
 function runTests() {
   const log = document.getElementById("test-output");
