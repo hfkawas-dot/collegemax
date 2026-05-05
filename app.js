@@ -994,13 +994,15 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       const namePart = (state.profile.name || "resume").trim().replace(/[^A-Za-z0-9-_]+/g, "_");
       a.href = url;
       a.download = `${namePart}-${date}.txt`;
+      a.style.display = "none";
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      // Also still show in-page so they can see what's there
-      elExportArea.value = text;
+      // Brief inline confirmation, then hide
+      elExportArea.value = `Saved to your Downloads folder as: ${a.download}\n\n--- File contents ---\n\n` + text;
       elExportArea.style.display = "block";
+      setTimeout(() => { elExportArea.style.display = "none"; }, 6000);
     });
 
     // ===== TABS =====
@@ -1284,111 +1286,140 @@ Class Rank: 12 of 380</pre>
       e.preventDefault();
       e.stopPropagation();
       elDropZone.classList.remove("drag-over");
-      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (!file) {
-        elOcrProgress.innerHTML = `<span class="ocr-err">No file received from the drop. Try clicking the zone instead.</span>`;
+      const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      const images = files.filter(f => f.type && f.type.startsWith("image/"));
+      if (images.length === 0) {
+        elOcrProgress.innerHTML = `<span class="ocr-err">No image found in the drop. Try a JPG or PNG.</span>`;
         return;
       }
-      if (!file.type || !file.type.startsWith("image/")) {
-        elOcrProgress.innerHTML = `<span class="ocr-err">That doesn't look like an image (${escapeHtml(file.type || "unknown type")}). Try a JPG or PNG.</span>`;
-        return;
-      }
-      runOcrOnFile(file);
+      for (const f of images) runOcrOnFile(f);
     });
 
     // Also block document-level drop so a misfire doesn't navigate away
     document.addEventListener("dragover", (e) => { e.preventDefault(); });
     document.addEventListener("drop", (e) => { e.preventDefault(); });
 
-    function showImagePreview(file) {
-      console.log("[CollegeMax] showImagePreview:", file && file.name, file && file.type, file && file.size);
+    // Multi-image registry: each upload gets a unique entry with its OCR'd text.
+    // Adding a new image appends; removing only removes that one.
+    const uploadedImages = []; // { id, file, url, text, status }
+
+    function renderImagePreviews() {
       const elPreview = document.getElementById("image-preview");
-      if (!elPreview) {
-        console.warn("[CollegeMax] image-preview element not found");
-        return;
-      }
-      const prevImg = elPreview.querySelector("img");
-      if (prevImg && prevImg.dataset.objurl) {
-        try { URL.revokeObjectURL(prevImg.dataset.objurl); } catch {}
-      }
-      let url;
-      try {
-        url = URL.createObjectURL(file);
-      } catch (e) {
-        console.error("[CollegeMax] createObjectURL failed:", e);
-        return;
-      }
-      const sizeKb = (file.size / 1024).toFixed(0);
-      elPreview.innerHTML = `
-        <div class="image-preview-head">
-          <span class="image-preview-label">Your uploaded photo</span>
-          <span class="image-preview-name">${escapeHtml(file.name || "image")} · ${sizeKb} KB</span>
-          <button class="image-remove" type="button" aria-label="Remove">&times;</button>
-        </div>
-        <img src="${url}" alt="Uploaded preview" data-objurl="${url}" />
-      `;
-      elPreview.removeAttribute("hidden");
-      elPreview.style.display = "block";
-
-      const imgEl = elPreview.querySelector("img");
-      imgEl.addEventListener("load", () => {
-        console.log("[CollegeMax] preview img loaded:", imgEl.naturalWidth + "x" + imgEl.naturalHeight);
-      });
-      imgEl.addEventListener("error", () => {
-        // Only act if this img is STILL the active one (not replaced by a newer paste)
-        if (!imgEl.isConnected) return;
-        console.warn("[CollegeMax] preview img failed to load");
-        elPreview.innerHTML = `<div class="image-preview-head"><span class="image-preview-label">Photo upload</span></div><div class="muted">Could not display the photo. The OCR'd text below should still work.</div>`;
-      });
-
-      elPreview.querySelector(".image-remove").addEventListener("click", () => {
-        try { URL.revokeObjectURL(url); } catch {}
+      if (!elPreview) return;
+      if (uploadedImages.length === 0) {
         elPreview.innerHTML = "";
         elPreview.setAttribute("hidden", "");
         elPreview.style.display = "";
-      });
+        return;
+      }
+      const cards = uploadedImages.map((img, i) => {
+        const sizeKb = (img.file.size / 1024).toFixed(0);
+        const status = img.status === "reading" ? `<span class="image-card-status">Reading...</span>`
+                     : img.status === "done" ? `<span class="image-card-status done">Done</span>`
+                     : img.status === "error" ? `<span class="image-card-status error">OCR failed</span>`
+                     : "";
+        return `
+          <div class="image-card" data-id="${img.id}">
+            <div class="image-preview-head">
+              <span class="image-preview-label">Photo ${i + 1}</span>
+              <span class="image-preview-name">${escapeHtml(img.file.name || "image")} · ${sizeKb} KB</span>
+              ${status}
+              <button class="image-remove" type="button" data-id="${img.id}" aria-label="Remove">&times;</button>
+            </div>
+            <img src="${img.url}" alt="Uploaded photo ${i + 1}" />
+          </div>
+        `;
+      }).join("");
+      elPreview.innerHTML = cards;
+      elPreview.removeAttribute("hidden");
+      elPreview.style.display = "block";
 
-      // Scroll into view so the user actually sees the preview
-      requestAnimationFrame(() => {
-        elPreview.scrollIntoView({ behavior: "smooth", block: "center" });
+      elPreview.querySelectorAll(".image-remove").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.id;
+          const idx = uploadedImages.findIndex(img => String(img.id) === String(id));
+          if (idx >= 0) {
+            try { URL.revokeObjectURL(uploadedImages[idx].url); } catch {}
+            uploadedImages.splice(idx, 1);
+            renderImagePreviews();
+            reparseAllImages();
+          }
+        });
       });
+    }
+
+    function appendImagePreview(file) {
+      console.log("[CollegeMax] appendImagePreview:", file && file.name, file && file.type, file && file.size);
+      let url;
+      try { url = URL.createObjectURL(file); }
+      catch (e) { console.error("[CollegeMax] createObjectURL failed:", e); return null; }
+      const id = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+      uploadedImages.push({ id, file, url, text: "", status: "reading" });
+      renderImagePreviews();
+      requestAnimationFrame(() => {
+        const elPreview = document.getElementById("image-preview");
+        if (elPreview) elPreview.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+      return id;
+    }
+
+    function reparseAllImages() {
+      const combined = uploadedImages.map(i => i.text).filter(Boolean).join("\n\n");
+      if (combined) {
+        runParse(combined);
+      } else {
+        // No text left -> clear staged preview
+        elParseResult.innerHTML = "";
+      }
     }
 
     async function runOcrOnFile(file) {
       if (!file) return;
-      showImagePreview(file);
-      elOcrProgress.innerHTML = `<span class="ocr-status">Preparing OCR engine...</span><div class="ocr-bar"><div></div></div>`;
-      const bar = elOcrProgress.querySelector(".ocr-bar > div");
+      const id = appendImagePreview(file);
+      if (!id) return;
+
+      const showStatus = (msg, cls) => {
+        elOcrProgress.innerHTML = `<span class="ocr-${cls || 'status'}">${escapeHtml(msg)}</span>`;
+      };
+
+      showStatus("Preparing OCR engine...", "status");
       try {
         const worker = await getTesseractWorker();
-        const statusEl = elOcrProgress.querySelector(".ocr-status");
-        if (statusEl) statusEl.textContent = "Reading image (5-30 seconds)...";
-
+        showStatus(`Reading photo ${uploadedImages.findIndex(i => i.id === id) + 1} of ${uploadedImages.length} (5-30s)...`, "status");
         const result = await worker.recognize(file);
         const text = (result && result.data && result.data.text) || "";
-        if (bar) bar.style.width = "100%";
+        const entry = uploadedImages.find(i => i.id === id);
+        if (!entry) return; // user removed before OCR finished
 
         if (!text.trim()) {
-          elOcrProgress.innerHTML = `<span class="ocr-err">OCR returned empty text. The image may be too small or low-contrast. Try a clearer photo.</span>`;
+          entry.status = "error";
+          entry.text = "";
+          renderImagePreviews();
+          showStatus("OCR returned empty text from this photo. Try a clearer image.", "err");
           return;
         }
-        // Don't dump the OCR text into the textarea. Feed it directly to the parser.
-        // Stash the raw OCR for the "show extracted text" toggle below the preview.
-        lastOcrText = text;
-        elOcrProgress.innerHTML = `<span class="ocr-ok">Image read. Parsing...</span>`;
-        runParse(text);
-        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 1800);
+        entry.text = text;
+        entry.status = "done";
+        renderImagePreviews();
+        showStatus(`Photo read. Parsing combined text from ${uploadedImages.filter(i => i.text).length} photo(s)...`, "ok");
+        reparseAllImages();
+        setTimeout(() => { elOcrProgress.innerHTML = ""; }, 2000);
       } catch (err) {
         console.error("OCR failed:", err);
-        elOcrProgress.innerHTML = `<span class="ocr-err">OCR failed: ${escapeHtml(err.message || String(err))}<br><small>Open the browser console for full error details.</small></span>`;
+        const entry = uploadedImages.find(i => i.id === id);
+        if (entry) { entry.status = "error"; renderImagePreviews(); }
+        showStatus("OCR failed: " + (err.message || String(err)), "err");
       }
     }
-    let lastOcrText = "";
 
     elImageInput.addEventListener("change", async (e) => {
-      const file = e.target.files && e.target.files[0];
+      const files = Array.from((e.target.files) || []);
       try {
-        await runOcrOnFile(file);
+        for (const f of files) {
+          if (f.type && f.type.startsWith("image/")) {
+            runOcrOnFile(f);
+          }
+        }
       } finally {
         elImageInput.value = ""; // allow re-upload of same file
       }
@@ -1400,33 +1431,25 @@ Class Rank: 12 of 380</pre>
       console.log("[CollegeMax] paste event fired. clipboardData:", !!cd);
       if (!cd) return false;
 
-      let imageFile = null;
+      const imageFiles = [];
 
-      // Modern API: clipboardData.files
       if (cd.files && cd.files.length > 0) {
-        console.log("[CollegeMax] clipboard.files length:", cd.files.length);
         for (const f of cd.files) {
-          console.log("[CollegeMax]   file:", f.name, "type:", f.type, "size:", f.size);
-          if (f.type && f.type.startsWith("image/")) { imageFile = f; break; }
+          if (f.type && f.type.startsWith("image/")) imageFiles.push(f);
         }
       }
-
-      // Fallback: clipboardData.items
-      if (!imageFile && cd.items) {
-        console.log("[CollegeMax] clipboard.items length:", cd.items.length);
+      if (imageFiles.length === 0 && cd.items) {
         for (const item of cd.items) {
-          console.log("[CollegeMax]   item kind:", item.kind, "type:", item.type);
           if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
             const f = item.getAsFile();
-            if (f) { imageFile = f; break; }
+            if (f) imageFiles.push(f);
           }
         }
       }
 
-      if (imageFile) {
+      if (imageFiles.length > 0) {
         e.preventDefault();
-        console.log("[CollegeMax] pasted image -> runOcrOnFile, size", imageFile.size);
-        runOcrOnFile(imageFile);
+        for (const f of imageFiles) runOcrOnFile(f);
         return true;
       }
       console.log("[CollegeMax] no image found in clipboard");

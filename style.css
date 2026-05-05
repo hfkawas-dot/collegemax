@@ -674,6 +674,31 @@ details .tip {
   border: 1px solid var(--border);
   background: #fff;
 }
+.image-card {
+  margin-bottom: 14px;
+}
+.image-card:last-child { margin-bottom: 0; }
+.image-card-status {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--text-dim);
+  border: 1px solid var(--border-2);
+}
+.image-card-status.done {
+  background: var(--green);
+  color: #003020;
+  border-color: var(--green);
+}
+.image-card-status.error {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
 .screenshot-zone:hover { border-color: var(--accent); background: var(--bg-2); }
 .screenshot-zone.drag-over {
   border-color: var(--accent);
