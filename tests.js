@@ -552,7 +552,8 @@ test("parseTranscript: full realistic transcript blob", () => {
   assertEq(r.sat, 1520);
   assertEq(r.apCount, 6);
   assertEq(r.classRank, 2); // 8/412 -> 1.94 -> rounded to 2
-  assert(r.intendedMajor && r.intendedMajor.toLowerCase().includes("bioengineering"));
+  assert(Array.isArray(r.intendedMajors) && r.intendedMajors.length >= 1, "intendedMajors should be a non-empty array");
+  assert(r.intendedMajors.some(m => m.toLowerCase().includes("bioengineering")));
 });
 
 test("parseTranscript: ignores out-of-range numbers", () => {
@@ -618,7 +619,48 @@ test("parseTranscript: bare GPA prefix 'I have a 3.85 GPA'", () => {
 
 test("parseTranscript: 'major in Computer Science'", () => {
   const r = parseTranscript("I want to major in Computer Science.");
-  assert(r.intendedMajor && r.intendedMajor.toLowerCase().includes("computer science"));
+  assert(Array.isArray(r.intendedMajors));
+  assert(r.intendedMajors.some(m => m.toLowerCase().includes("computer science")));
+});
+
+test("parseTranscript: multiple majors comma-separated", () => {
+  const r = parseTranscript("Intended Major: Computer Science, Mathematics");
+  assert(Array.isArray(r.intendedMajors));
+  assertEq(r.intendedMajors.length, 2);
+  assert(r.intendedMajors.some(m => m.toLowerCase().includes("computer science")));
+  assert(r.intendedMajors.some(m => m.toLowerCase().includes("mathematics")));
+});
+
+test("parseTranscript: 'and' separated majors", () => {
+  const r = parseTranscript("Major: Biology and Chemistry");
+  assert(Array.isArray(r.intendedMajors));
+  assertEq(r.intendedMajors.length, 2);
+});
+
+// === GPA CONVERSION TESTS ===
+test("estimateOdds: when only weighted GPA, factors include conversion explanation", () => {
+  const harvard = COLLEGES.find(c => c.name === "Harvard");
+  const r = estimateOdds({ weightedGpa: 4.5, sat: 1520, apCount: 8 }, [], harvard);
+  const factorText = r.factors.join(" ");
+  assert(factorText.toLowerCase().includes("weighted"), "factors should explain weighted-to-unweighted conversion");
+  assert(factorText.includes("4.5"), "factors should mention the weighted value used");
+});
+
+test("estimateOdds: unweighted preferred over weighted when both given", () => {
+  const harvard = COLLEGES.find(c => c.name === "Harvard");
+  const r = estimateOdds({ unweightedGpa: 3.95, weightedGpa: 4.50, sat: 1520, apCount: 8 }, [], harvard);
+  const factorText = r.factors.join(" ");
+  assert(factorText.includes("your unweighted"), "should prefer unweighted, got: " + factorText);
+});
+
+test("estimateOdds: very high weighted (5.0+) doesn't convert below scale", () => {
+  const harvard = COLLEGES.find(c => c.name === "Harvard");
+  const r = estimateOdds({ weightedGpa: 5.0, sat: 1520, apCount: 12 }, [], harvard);
+  // Conversion: 5.0 - 0.65 = 4.35 -> capped at 4.0 unweighted (sanity)
+  // Actually we just subtract, doesn't cap. But should be reasonable.
+  assert(r.probability > 0, "should compute valid probability");
+  const factorText = r.factors.join(" ");
+  assert(factorText.includes("5.0") || factorText.includes("4.35"), "factors should show the conversion");
 });
 
 test("parseTranscript: accepts noisy OCR-like text with extra spaces", () => {

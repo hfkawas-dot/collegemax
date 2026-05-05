@@ -598,6 +598,61 @@ const ESSAY_CLICHES = [
   "more than i could ever imagine", "beyond my wildest dreams"
 ];
 
+// Common college majors students typically select. Free-text "other" is also supported.
+const MAJORS = [
+  "Computer Science",
+  "Mechanical Engineering",
+  "Electrical Engineering",
+  "Civil Engineering",
+  "Chemical Engineering",
+  "Biomedical Engineering",
+  "Mathematics",
+  "Statistics",
+  "Physics",
+  "Chemistry",
+  "Biology",
+  "Neuroscience",
+  "Pre-Med / Biological Sciences",
+  "Public Health",
+  "Nursing",
+  "Psychology",
+  "Economics",
+  "Finance",
+  "Business / Management",
+  "Marketing",
+  "Accounting",
+  "Political Science",
+  "International Relations",
+  "Public Policy",
+  "Sociology",
+  "Anthropology",
+  "History",
+  "Philosophy",
+  "English",
+  "Linguistics",
+  "Comparative Literature",
+  "Communications",
+  "Journalism",
+  "Film / Media Studies",
+  "Art / Studio Art",
+  "Graphic Design",
+  "Architecture",
+  "Music",
+  "Theater / Performing Arts",
+  "Education",
+  "Environmental Science",
+  "Geology / Earth Science",
+  "Astronomy",
+  "Cognitive Science",
+  "Data Science",
+  "Information Systems",
+  "Industrial Engineering",
+  "Materials Science",
+  "Biochemistry",
+  "Foreign Languages",
+  "Undecided"
+];
+
 if (typeof module !== "undefined") {
-  module.exports = { ACTIVITIES, CATEGORIES, TIERS, COLLEGES, ESSAY_PROMPTS, ESSAY_CLICHES };
+  module.exports = { ACTIVITIES, CATEGORIES, TIERS, COLLEGES, ESSAY_PROMPTS, ESSAY_CLICHES, MAJORS };
 }

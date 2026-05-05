@@ -124,7 +124,13 @@ Intended Major: Computer Science"></textarea>
           <label>ACT (1-36)<input name="act" type="number" min="1" max="36" placeholder="33" /></label>
           <label>AP / IB / Honors classes (count)<input name="apCount" type="number" min="0" max="20" placeholder="6" /></label>
           <label>Class rank — top __ %<input name="classRank" type="number" min="0" max="100" placeholder="5" /></label>
-          <label>Intended major<input name="intendedMajor" type="text" placeholder="Computer Science" /></label>
+          <label class="full">
+            <span>Intended major(s) <small style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-mute);">— click to toggle, multiple allowed</small></span>
+            <div id="majors-picker" class="majors-picker"></div>
+            <div class="majors-custom">
+              <input id="majors-custom-input" type="text" placeholder="Add a major not listed (press Enter)" />
+            </div>
+          </label>
           <label class="full">Things you like (comma-separated)<textarea name="likes" rows="2" placeholder="machine learning, climate policy, jazz piano"></textarea></label>
           <label class="full">Things you do (any activity, even informal)<textarea name="doing" rows="3" placeholder="Robotics team, weekend tutoring, run a Discord with 200 members about chess strategy"></textarea></label>
           <button type="submit" class="primary">Save Profile</button>
@@ -174,7 +180,7 @@ Intended Major: Computer Science"></textarea>
 
   </div>
 
-  <script src="data.js?v=17"></script>
-  <script src="app.js?v=17"></script>
+  <script src="data.js?v=18"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>

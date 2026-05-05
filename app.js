@@ -20,7 +20,7 @@ function defaultState() {
       act: null,
       apCount: null,
       classRank: null,    // percentile (top X%)
-      intendedMajor: "",
+      intendedMajors: [],
       likes: "",
       doing: ""
     },
@@ -46,6 +46,14 @@ function loadState(storage) {
     const merged = Object.assign({}, base, parsed);
     // Deep-merge nested objects so newly added fields keep their defaults.
     merged.profile = Object.assign({}, base.profile, parsed.profile || {});
+    // Migrate old `intendedMajor` (string) to new `intendedMajors` (array)
+    if (typeof merged.profile.intendedMajor === "string" && merged.profile.intendedMajor.trim()) {
+      const existing = Array.isArray(merged.profile.intendedMajors) ? merged.profile.intendedMajors : [];
+      const old = merged.profile.intendedMajor.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      merged.profile.intendedMajors = Array.from(new Set([...existing, ...old]));
+    }
+    if (!Array.isArray(merged.profile.intendedMajors)) merged.profile.intendedMajors = [];
+    delete merged.profile.intendedMajor;
     merged.essay = Object.assign({}, base.essay, parsed.essay || {});
     if (!Array.isArray(merged.saved)) merged.saved = [];
     if (!merged.customNotes || typeof merged.customNotes !== "object") merged.customNotes = {};
@@ -226,6 +234,9 @@ function exportResume(state, source) {
   const lines = ["MY COLLEGE RESUME", "=================", ""];
   if (state.profile.name) lines.push(`Name: ${state.profile.name}`);
   if (state.profile.grade) lines.push(`Grade: ${state.profile.grade}`);
+  if (Array.isArray(state.profile.intendedMajors) && state.profile.intendedMajors.length) {
+    lines.push(`Intended Major(s): ${state.profile.intendedMajors.join(", ")}`);
+  }
   lines.push("");
 
   // Group by category
@@ -257,15 +268,36 @@ function estimateOdds(profile, savedIds, college, source) {
   let multiplier = 1.0;
   const factors = [];
 
-  // ---- GPA (unweighted preferred) ----
-  const gpa = profile.unweightedGpa || (profile.weightedGpa ? profile.weightedGpa - 0.5 : null);
-  if (gpa !== null && gpa !== undefined && !isNaN(gpa)) {
+  // ---- GPA (unweighted preferred). Convert weighted only as fallback. ----
+  // college.avgGpa is unweighted-style (~3.65 to ~3.97 range from CDS data).
+  // Real schools weight differently (4.5 vs 5.0 scales, +0.5 vs +1.0 per AP),
+  // so we don't try to be precise — we make the conversion transparent in the
+  // factors list so the user can sanity-check.
+  let gpa = null;
+  let gpaSource = null;
+  if (typeof profile.unweightedGpa === "number" && !isNaN(profile.unweightedGpa) && profile.unweightedGpa > 0) {
+    gpa = profile.unweightedGpa;
+    gpaSource = `your unweighted GPA ${gpa.toFixed(2)}`;
+  } else if (typeof profile.weightedGpa === "number" && !isNaN(profile.weightedGpa) && profile.weightedGpa > 0) {
+    const w = profile.weightedGpa;
+    let approx;
+    if (w <= 4.0) approx = w;                  // already on 4.0 scale (no AP weighting)
+    else if (w <= 4.3) approx = w - 0.25;
+    else if (w <= 4.6) approx = w - 0.4;
+    else if (w <= 4.9) approx = w - 0.55;
+    else approx = w - 0.65;                    // 5.0+ very rigorous
+    gpa = approx;
+    gpaSource = `weighted ${w.toFixed(2)} → est. unweighted ${approx.toFixed(2)} (add unweighted GPA for accuracy)`;
+  }
+
+  if (gpa !== null) {
+    factors.push(`GPA basis: ${gpaSource}. Comparing vs ${college.name} admit avg ~${college.avgGpa}.`);
     const diff = gpa - college.avgGpa;
-    if (diff <= -0.4) { multiplier *= 0.15; factors.push(`GPA ${gpa.toFixed(2)} well below ${college.name} avg ${college.avgGpa}`); }
+    if (diff <= -0.4) { multiplier *= 0.15; factors.push(`GPA ${gpa.toFixed(2)} well below avg ${college.avgGpa} (-${(-diff).toFixed(2)})`); }
     else if (diff <= -0.2) { multiplier *= 0.4; factors.push(`GPA ${gpa.toFixed(2)} below avg ${college.avgGpa}`); }
-    else if (diff <= -0.05) { multiplier *= 0.75; factors.push(`GPA slightly below avg`); }
-    else if (diff <= 0.05) { multiplier *= 1.0; factors.push(`GPA at admit average`); }
-    else { multiplier *= 1.15; factors.push(`GPA above admit average`); }
+    else if (diff <= -0.05) { multiplier *= 0.75; factors.push(`GPA ${gpa.toFixed(2)} slightly below avg`); }
+    else if (diff <= 0.05) { multiplier *= 1.0; factors.push(`GPA ${gpa.toFixed(2)} at admit average`); }
+    else { multiplier *= 1.15; factors.push(`GPA ${gpa.toFixed(2)} above admit average`); }
   } else {
     factors.push("GPA unknown — fill profile for sharper estimate");
   }
@@ -528,13 +560,20 @@ function parseTranscript(text) {
     }
   }
 
-  // ---- Intended major ----
-  m = t.match(/(?:intended|prospective|planning\s+to\s+study|want\s+to\s+study|plan\s+to\s+major\s+in|major\s+in)?\s*major\s*[:=-]+\s*([A-Za-z][A-Za-z\s&]*?)(?:[\n.,]|$)/i)
-   || t.match(/major\s+in\s+([A-Za-z][A-Za-z\s&]*?)(?:[\n.,]|$)/i)
-   || t.match(/study(?:ing)?\s+([A-Z][A-Za-z\s&]*?)(?:[\n.,]|$)/);
+  // ---- Intended major(s) ----
+  // Accept comma- or "and"-separated list. e.g. "Major: Computer Science, Math".
+  m = t.match(/(?:intended|prospective|planning\s+to\s+study|want\s+to\s+study|plan\s+to\s+major\s+in|major\s+in)?\s*majors?\s*[:=-]+\s*([A-Za-z][A-Za-z,\s&\/-]*?)(?:[\n.]|$)/i)
+   || t.match(/majors?\s+in\s+([A-Za-z][A-Za-z,\s&\/-]*?)(?:[\n.]|$)/i)
+   || t.match(/study(?:ing)?\s+([A-Z][A-Za-z,\s&\/-]*?)(?:[\n.]|$)/);
   if (m) {
-    const major = m[1].trim();
-    if (major.length > 2 && major.length < 60) out.intendedMajor = major;
+    const raw = m[1].trim();
+    if (raw.length > 2 && raw.length < 200) {
+      const list = raw
+        .split(/\s*,\s*|\s+and\s+/i)
+        .map(s => s.trim())
+        .filter(s => s.length > 1 && s.length < 60);
+      if (list.length > 0) out.intendedMajors = list;
+    }
   }
 
   return out;
@@ -560,7 +599,7 @@ Schema:
   "act": integer 1-36 (composite ACT),
   "apCount": integer (TOTAL count of AP + IB + Honors courses across ALL years on the transcript, deduplicated),
   "classRank": integer (top X percentile, e.g. "8 of 412" -> 2),
-  "intendedMajor": string
+  "intendedMajors": array of strings (one per major, e.g. ["Computer Science"] or ["Biology", "Chemistry"])
 }
 
 Critical rules:
@@ -628,7 +667,15 @@ JSON:`;
   if (typeof parsed.act === "number" && parsed.act >= 1 && parsed.act <= 36) out.act = Math.round(parsed.act);
   if (typeof parsed.apCount === "number" && parsed.apCount >= 0 && parsed.apCount <= 30) out.apCount = Math.round(parsed.apCount);
   if (typeof parsed.classRank === "number" && parsed.classRank >= 1 && parsed.classRank <= 100) out.classRank = Math.round(parsed.classRank);
-  if (typeof parsed.intendedMajor === "string" && parsed.intendedMajor.length > 1 && parsed.intendedMajor.length < 80) out.intendedMajor = parsed.intendedMajor.trim();
+  if (Array.isArray(parsed.intendedMajors)) {
+    const list = parsed.intendedMajors
+      .filter(s => typeof s === "string" && s.length > 1 && s.length < 80)
+      .map(s => s.trim());
+    if (list.length > 0) out.intendedMajors = list;
+  } else if (typeof parsed.intendedMajor === "string" && parsed.intendedMajor.length > 1 && parsed.intendedMajor.length < 80) {
+    // Backward compat: Claude returned old-shape single major
+    out.intendedMajors = [parsed.intendedMajor.trim()];
+  }
   return out;
 }
 
@@ -736,7 +783,9 @@ function generateEssay(profile, savedIds, prompt, source, opts) {
 
   const acts = (savedIds || []).map(id => source.find(a => a.id === id)).filter(Boolean);
   const top = acts.slice(0, 3);
-  const major = profile.intendedMajor || "the field I'm exploring";
+  const major = (Array.isArray(profile.intendedMajors) && profile.intendedMajors.length)
+    ? profile.intendedMajors.join(" and ")
+    : (profile.intendedMajor || "the field I'm exploring");
   const name = profile.name || "";
 
   const detailList = detailsRaw.split(/[,\n;]+/).map(s => s.trim()).filter(Boolean);
@@ -1029,13 +1078,41 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     const profileMsg = document.getElementById("profile-saved-msg");
     function fillProfileForm() {
       const p = state.profile;
-      const fields = ["name", "grade", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor", "likes", "doing"];
+      const fields = ["name", "grade", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "likes", "doing"];
       for (const f of fields) {
         const el = profileForm.elements[f];
         if (!el) continue;
         const v = p[f];
         el.value = (v === null || v === undefined) ? "" : v;
       }
+      renderMajorsPicker();
+    }
+
+    function renderMajorsPicker() {
+      const picker = document.getElementById("majors-picker");
+      if (!picker) return;
+      const selected = new Set((state.profile.intendedMajors || []).map(s => s.toLowerCase()));
+      // Built-in MAJORS from data.js, plus any custom ones the user added that aren't in the list
+      const allMajors = [...MAJORS];
+      for (const m of (state.profile.intendedMajors || [])) {
+        if (!allMajors.some(x => x.toLowerCase() === m.toLowerCase())) allMajors.push(m);
+      }
+      picker.innerHTML = allMajors.map(m => {
+        const isSel = selected.has(m.toLowerCase());
+        return `<button type="button" class="major-pill ${isSel ? 'selected' : ''}" data-major="${escapeHtml(m)}">${escapeHtml(m)}</button>`;
+      }).join("");
+      picker.querySelectorAll(".major-pill").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const m = btn.dataset.major;
+          const arr = state.profile.intendedMajors || [];
+          const idx = arr.findIndex(x => x.toLowerCase() === m.toLowerCase());
+          if (idx >= 0) arr.splice(idx, 1);
+          else arr.push(m);
+          state.profile.intendedMajors = arr;
+          persist();
+          renderMajorsPicker();
+        });
+      });
     }
     // Quick-import: parse pasted transcript and prefill the form
     const elTranscript = document.getElementById("transcript-input");
@@ -1049,9 +1126,9 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       act: "ACT",
       apCount: "AP/Honors count",
       classRank: "Class rank %",
-      intendedMajor: "Major"
+      intendedMajors: "Major(s)"
     };
-    const FIELD_ORDER = ["name", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajor"];
+    const FIELD_ORDER = ["name", "unweightedGpa", "weightedGpa", "sat", "act", "apCount", "classRank", "intendedMajors"];
 
     // Staged values from the last parse — NOT applied until user confirms
     let stagedParse = null;
@@ -1087,8 +1164,9 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
       const wrap = document.createElement("div");
       wrap.className = "parse-report staged";
 
-      const found = FIELD_ORDER.filter(f => values[f] !== undefined && values[f] !== null && values[f] !== "");
-      const missed = FIELD_ORDER.filter(f => !(values[f] !== undefined && values[f] !== null && values[f] !== ""));
+      const isPresent = (v) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
+      const found = FIELD_ORDER.filter(f => isPresent(values[f]));
+      const missed = FIELD_ORDER.filter(f => !isPresent(values[f]));
 
       if (found.length === 0) {
         wrap.innerHTML = `
@@ -1109,6 +1187,7 @@ Class Rank: 12 of 380</pre>
 
       const rowsHtml = found.map(f => {
         const val = values[f];
+        const displayVal = Array.isArray(val) ? val.join(", ") : String(val);
         const inputType = (typeof val === "number") ? "number" : "text";
         return `
           <div class="staged-row" data-field="${f}">
@@ -1116,7 +1195,7 @@ Class Rank: 12 of 380</pre>
               <input type="checkbox" checked />
               <span>${escapeHtml(FIELD_LABELS[f])}</span>
             </label>
-            <input type="${inputType}" class="staged-value" value="${escapeHtml(String(val))}" />
+            <input type="${inputType}" class="staged-value" value="${escapeHtml(displayVal)}" />
           </div>
         `;
       }).join("");
@@ -1167,12 +1246,21 @@ Class Rank: 12 of 380</pre>
           if (!isNaN(num) && val !== "") val = num;
           else return; // skip invalid
         }
+        // Special: intendedMajors stored as array, edited as comma-separated string
+        if (field === "intendedMajors") {
+          const list = String(val).split(/\s*,\s*/).map(s => s.trim()).filter(Boolean);
+          state.profile.intendedMajors = list;
+          applied.push(FIELD_LABELS[field]);
+          return;
+        }
         if (profileForm.elements[field]) {
           profileForm.elements[field].value = val;
           state.profile[field] = val;
           applied.push(FIELD_LABELS[field]);
         }
       });
+      // Re-render the majors picker if any majors were applied
+      renderMajorsPicker();
       persist();
       stagedParse = null;
       elParseResult.innerHTML = `<div class="parse-success applied"><strong>Filled ${applied.length} field${applied.length === 1 ? "" : "s"}:</strong> ${applied.join(", ")}. Review the form below and click <em>Save Profile</em>.</div>`;
@@ -1480,10 +1568,33 @@ Class Rank: 12 of 380</pre>
           state.profile[k] = v;
         }
       }
+      // intendedMajors is managed via the picker, not the form
       persist();
       profileMsg.textContent = "Saved. Switch to College Odds to see updated estimates.";
       setTimeout(() => { profileMsg.textContent = ""; }, 3500);
     });
+
+    // Custom-major input: pressing Enter adds it
+    const elMajorsCustomInput = document.getElementById("majors-custom-input");
+    if (elMajorsCustomInput) {
+      elMajorsCustomInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const v = elMajorsCustomInput.value.trim();
+          if (v) {
+            const arr = state.profile.intendedMajors || [];
+            if (!arr.some(x => x.toLowerCase() === v.toLowerCase())) {
+              arr.push(v);
+              state.profile.intendedMajors = arr;
+              persist();
+              renderMajorsPicker();
+            }
+            elMajorsCustomInput.value = "";
+          }
+        }
+      });
+    }
+
     fillProfileForm();
 
     // ===== ESSAY =====
